@@ -797,71 +797,98 @@ else:
 # ============== EXTRA FEATURE BLOCKS BELOW ==================
 # ============================================================
 
-# ----------------- (A) SCATTERPLOT — Non-pen Goals vs xG -----------------
+# ----------------- (A) SCATTERPLOT — Goals vs xG -----------------
 st.markdown("---")
 st.header("📈 Scatter — Non-penalty Goals vs xG")
-st.caption("Interactive; hover to inspect. Use the expander to change axes and pool.")
 
 with st.expander("Scatter settings", expanded=False):
+    # Axis metric picks (defaults as requested)
     numeric_cols = df.select_dtypes(include="number").columns.tolist()
     x_default = "Non-penalty goals per 90"
     y_default = "xG per 90"
-    x_metric = st.selectbox("X-axis metric", [c for c in FEATURES if c in numeric_cols],
-                            index=(FEATURES.index(x_default) if x_default in FEATURES else 0), key="sc_x")
-    y_metric = st.selectbox("Y-axis metric", [c for c in FEATURES if c in numeric_cols],
-                            index=(FEATURES.index(y_default) if y_default in FEATURES else 1), key="sc_y")
+    x_metric = st.selectbox(
+        "X-axis metric",
+        [c for c in FEATURES if c in numeric_cols],
+        index=(FEATURES.index(x_default) if x_default in FEATURES else 0),
+        key="sc_x",
+    )
+    y_metric = st.selectbox(
+        "Y-axis metric",
+        [c for c in FEATURES if c in numeric_cols],
+        index=(FEATURES.index(y_default) if y_default in FEATURES else 1),
+        key="sc_y",
+    )
 
+    # Pool: default = player's league; presets + custom add-ons
     leagues_available_sc = sorted(df["League"].dropna().unique().tolist())
     player_league = player_row.iloc[0]["League"] if not player_row.empty else None
 
-    preset_sc = st.segmented_control("League preset", ["Player's league","Top 5","Top 20","EFL","Custom"], key="sc_preset")
+    preset_choices_sc = [
+        "Player's league",
+        "Top 5 Europe",
+        "Top 20 Europe",
+        "EFL (England 2–4)",
+        "Custom",
+    ]
+    preset_sc = st.selectbox("League preset", preset_choices_sc, index=0, key="sc_preset")
 
     preset_map_sc = {
         "Player's league": {player_league} if player_league else set(),
-        "Top 5": set(PRESET_LEAGUES.get("Top 5 Europe", [])),
-        "Top 20": set(PRESET_LEAGUES.get("Top 20 Europe", [])),
-        "EFL": set(PRESET_LEAGUES.get("EFL (England 2–4)", [])),
+        "Top 5 Europe": set(PRESET_LEAGUES.get("Top 5 Europe", [])),
+        "Top 20 Europe": set(PRESET_LEAGUES.get("Top 20 Europe", [])),
+        "EFL (England 2–4)": set(PRESET_LEAGUES.get("EFL (England 2–4)", [])),
         "Custom": set(),
     }
     preset_set = preset_map_sc.get(preset_sc, set())
     add_leagues_sc = st.multiselect("Add leagues", leagues_available_sc, default=[], key="sc_add_leagues")
     leagues_scatter = sorted(set(add_leagues_sc) | preset_set)
 
-    # Fallback so plot always has something
+    # If user left it empty, fall back to player's league so the plot always works
     if not leagues_scatter and player_league:
         leagues_scatter = [player_league]
 
     same_pos_scatter = st.checkbox("Limit pool to current position prefix", value=True, key="sc_pos")
 
-    # Filters
+    # Filters: minutes, age, league strength (quality)
+    df["Minutes played"] = pd.to_numeric(df["Minutes played"], errors="coerce")
+    df["Age"] = pd.to_numeric(df["Age"], errors="coerce")
     min_minutes_s, max_minutes_s = st.slider("Minutes filter", 0, 5000, (1000, 5000), key="sc_min")
-    age_min_bound = int(df["Age"].min()) if df["Age"].notna().any() else 14
-    age_max_bound = int(df["Age"].max()) if df["Age"].notna().any() else 45
+    age_min_bound = int(np.nanmin(df["Age"])) if df["Age"].notna().any() else 14
+    age_max_bound = int(np.nanmax(df["Age"])) if df["Age"].notna().any() else 45
     min_age_s, max_age_s = st.slider("Age filter", age_min_bound, age_max_bound, (16, 40), key="sc_age")
 
     min_strength_s, max_strength_s = st.slider("League quality (strength)", 0, 101, (0, 101), key="sc_ls")
 
+    # Label & inclusion toggles
     include_selected = st.toggle("Include selected player", value=True, key="sc_include")
-    label_mode = st.selectbox("Labels", ["Selected only", "Top 20 by X", "Top 20 by Y", "All (dense)"], index=0, key="sc_labels")
+    label_all = st.toggle("Label ALL players in chart", value=False, key="sc_labels_all")
+    allow_overlap = st.toggle("Allow overlapping labels", value=False, key="sc_overlap")
+
+    # Visual improvements
+    show_medians = st.checkbox("Show median reference lines", value=True, key="sc_medians")
+    shade_iqr = st.checkbox("Shade interquartile range (25–75%)", value=True, key="sc_iqr")
     point_alpha = st.slider("Point opacity", 0.2, 1.0, 0.85, 0.05, key="sc_alpha")
 
-# ---- Build scatter pool & Altair chart ----
+# ---- Build scatter pool ----
 try:
     pool_sc = df[df["League"].isin(leagues_scatter)].copy()
     if same_pos_scatter and not player_row.empty:
         pool_sc = pool_sc[pool_sc["Position"].astype(str).apply(position_filter)]
 
-    pool_sc = pool_sc[
-        pool_sc["Minutes played"].between(min_minutes_s, max_minutes_s) &
-        pool_sc["Age"].between(min_age_s, max_age_s)
-    ]
+    # numeric + filters
+    pool_sc["Minutes played"] = pd.to_numeric(pool_sc["Minutes played"], errors="coerce")
+    pool_sc["Age"] = pd.to_numeric(pool_sc["Age"], errors="coerce")
+    pool_sc = pool_sc[pool_sc["Minutes played"].between(min_minutes_s, max_minutes_s)]
+    pool_sc = pool_sc[pool_sc["Age"].between(min_age_s, max_age_s)]
+
+    # league quality filter
     pool_sc["League Strength"] = pool_sc["League"].map(LEAGUE_STRENGTHS).fillna(0.0)
     pool_sc = pool_sc[
-        (pool_sc["League Strength"] >= float(min_strength_s)) &
-        (pool_sc["League Strength"] <= float(max_strength_s))
+        (pool_sc["League Strength"] >= float(min_strength_s))
+        & (pool_sc["League Strength"] <= float(max_strength_s))
     ]
 
-    # Ensure metrics present & numeric
+    # Ensure metrics are numeric and present
     if x_metric not in pool_sc.columns or y_metric not in pool_sc.columns:
         st.info("Selected axis metrics are missing from the dataset.")
     else:
@@ -869,98 +896,159 @@ try:
         pool_sc[y_metric] = pd.to_numeric(pool_sc[y_metric], errors="coerce")
         pool_sc = pool_sc.dropna(subset=[x_metric, y_metric, "Player", "Team", "League"])
 
-        # Optionally exclude the selected player from the pool
+        # Selected player's name (regardless of inclusion toggle)
         selected_player_name = player_row.iloc[0]["Player"] if not player_row.empty else None
-        if not include_selected and selected_player_name is not None:
+
+        # If excluded, make sure the selected player is NOT in the pool
+        if not include_selected and selected_player_name is not None and not pool_sc.empty:
             pool_sc = pool_sc[pool_sc["Player"] != selected_player_name]
 
-        # If included but filtered out by pool, inject one copy so it can be highlighted
-        if include_selected and selected_player_name is not None and (pool_sc["Player"] == selected_player_name).sum() == 0:
-            ins = df[df["Player"] == selected_player_name].head(1).copy()
-            if not ins.empty:
-                ins["League Strength"] = ins["League"].map(LEAGUE_STRENGTHS).fillna(0.0)
-                ins[x_metric] = pd.to_numeric(ins[x_metric], errors="coerce")
-                ins[y_metric] = pd.to_numeric(ins[y_metric], errors="coerce")
-                pool_sc = pd.concat([pool_sc, ins], ignore_index=True, sort=False)
+        # If included, ensure we add them even if filtered out above
+        if include_selected and selected_player_name is not None:
+            need_insert = True
+            if not pool_sc.empty:
+                need_insert = not (pool_sc["Player"] == selected_player_name).any()
+            if need_insert:
+                insertable = df[df["Player"] == selected_player_name].head(1).copy()
+                if not insertable.empty:
+                    insertable["League Strength"] = insertable["League"].map(LEAGUE_STRENGTHS).fillna(0.0)
+                    insertable[x_metric] = pd.to_numeric(insertable[x_metric], errors="coerce")
+                    insertable[y_metric] = pd.to_numeric(insertable[y_metric], errors="coerce")
+                    pool_sc = pd.concat([pool_sc, insertable], ignore_index=True, sort=False)
 
-        # Label strategy
-        pool_sc["Label"] = ""
-        if label_mode == "Selected only" and include_selected and selected_player_name:
-            pool_sc.loc[pool_sc["Player"] == selected_player_name, "Label"] = pool_sc["Player"]
-        elif label_mode == "Top 20 by X":
-            idx = pool_sc.sort_values(x_metric, ascending=False).head(20).index
-            pool_sc.loc[idx, "Label"] = pool_sc.loc[idx, "Player"]
-        elif label_mode == "Top 20 by Y":
-            idx = pool_sc.sort_values(y_metric, ascending=False).head(20).index
-            pool_sc.loc[idx, "Label"] = pool_sc.loc[idx, "Player"]
-        elif label_mode == "All (dense)":
-            pool_sc["Label"] = pool_sc["Player"]
+        # ----- Plot -----
+        if pool_sc.empty:
+            st.info("No players in scatter pool after filters.")
+        else:
+            fig, ax = plt.subplots(figsize=(9.4, 6.6), dpi=200)
+            # Grey page & axis backgrounds
+            fig.patch.set_facecolor("#f3f4f6")     # page bg
+            ax.set_facecolor("#eeeeee")            # plot bg
 
-        # Mark selected player for color/size encoding
-        pool_sc["Selected?"] = include_selected & (pool_sc["Player"] == selected_player_name)
+            # Compute limits with a small padding so labels/points don't clip
+            x_vals = pool_sc[x_metric].values
+            y_vals = pool_sc[y_metric].values
+            def padded_limits(arr, pad_frac=0.06):
+                a_min, a_max = float(np.nanmin(arr)), float(np.nanmax(arr))
+                if a_min == a_max:
+                    a_min -= 1e-6; a_max += 1e-6
+                pad = (a_max - a_min) * pad_frac
+                return a_min - pad, a_max + pad
+            xlim = padded_limits(x_vals); ylim = padded_limits(y_vals)
+            ax.set_xlim(*xlim); ax.set_ylim(*ylim)
 
-        base = alt.Chart(pool_sc).encode(
-            x=alt.X(alt.Shorthand(x_metric, type="quantitative"), title=x_metric),
-            y=alt.Y(alt.Shorthand(y_metric, type="quantitative"), title=y_metric),
-            tooltip=[
-                alt.Tooltip("Player:N"), alt.Tooltip("Team:N"), alt.Tooltip("League:N"),
-                alt.Tooltip("Minutes played:Q", format=",.0f"),
-                alt.Tooltip("Age:Q", format=",.0f"),
-                alt.Tooltip("League Strength:Q", format=",.0f"),
-                alt.Tooltip(f"{x_metric}:Q", format=",.2f"),
-                alt.Tooltip(f"{y_metric}:Q", format=",.2f"),
-            ],
-        )
+            # Determine whether we have a selected player to highlight
+            sel_name = selected_player_name if include_selected else None
 
-        pts = base.mark_circle(stroke="white", strokeWidth=0.6).encode(
-            color=alt.condition(
-                alt.datum["Selected?"],
-                alt.value("#C81E1E"),
-                alt.value("black")
-            ),
-            opacity=alt.value(float(point_alpha)),
-            size=alt.condition(
-                alt.datum["Selected?"],
-                alt.value(110),
-                alt.value(48)
-            ),
-        )
+            # Others (black)
+            others = pool_sc[pool_sc["Player"] != sel_name] if sel_name is not None else pool_sc
+            ax.scatter(
+                others[x_metric], others[y_metric],
+                s=30, c="black", alpha=float(point_alpha), linewidths=0.4, edgecolors="white", zorder=2
+            )
 
-        # Text labels (only where Label != "")
-        labels = base.transform_filter(
-            alt.datum.Label != ""
-        ).mark_text(dy=-8, fontSize=10).encode(
-            text="Label:N",
-            color=alt.condition(
-                alt.datum["Selected?"],
-                alt.value("#C81E1E"),
-                alt.value("#111827")
-            ),
-        )
+            # Selected player (red) + label (only once) if included
+            already_labeled = set()
+            if sel_name is not None:
+                sel = pool_sc[pool_sc["Player"] == sel_name]
+                ax.scatter(
+                    sel[x_metric], sel[y_metric],
+                    s=90, c="#C81E1E", edgecolors="white", linewidths=1.0, zorder=4
+                )
+                for _, r in sel.iterrows():
+                    ax.annotate(
+                        r["Player"], (r[x_metric], r[y_metric]),
+                        xytext=(8, 8), textcoords="offset points",
+                        fontsize=9, fontweight="bold", color="#C81E1E", zorder=5
+                    )
+                    already_labeled.add(r["Player"])
 
-        chart = (pts + labels).properties(height=500).interactive()  # wheel zoom & pan
-        st.altair_chart(chart, use_container_width=True)
+            # ----- Visual improvements -----
+            # 1) Optional IQR shading (helps quick orientation)
+            if shade_iqr:
+                x_q1, x_q3 = np.nanpercentile(x_vals, [25, 75])
+                y_q1, y_q3 = np.nanpercentile(y_vals, [25, 75])
+                ax.axvspan(x_q1, x_q3, color="#d1d5db", alpha=0.25, zorder=1)
+                ax.axhspan(y_q1, y_q3, color="#d1d5db", alpha=0.25, zorder=1)
 
-        leagues_shown = ", ".join(sorted(set(pool_sc["League"])))
-        st.caption(f"Pool size: {len(pool_sc):,} • Leagues: {leagues_shown}")
+            # 2) Median reference lines (dashed), with unified label "Median"
+            if show_medians:
+                med_x = float(np.nanmedian(x_vals)); med_y = float(np.nanmedian(y_vals))
+                ax.axvline(med_x, color="#6b7280", ls="--", lw=1.25, zorder=1.5)
+                ax.axhline(med_y, color="#6b7280", ls="--", lw=1.25, zorder=1.5)
+                ax.text(med_x, ylim[1], "Median", ha="right", va="bottom",
+                        fontsize=8, color="#374151", backgroundcolor="white", zorder=3, clip_on=True)
+                ax.text(xlim[0], med_y, "Median", ha="left", va="top",
+                        fontsize=8, color="#374151", backgroundcolor="white", zorder=3, clip_on=True)
+
+            # 3) Optional labeling of ALL players (without duplication)
+            if label_all:
+                label_df = pool_sc
+                # Simple overlap-avoidance: skip labels too close to an already-labeled point
+                x_tol = (xlim[1] - xlim[0]) * 0.02
+                y_tol = (ylim[1] - ylim[0]) * 0.02
+                placed_pts = []
+
+                # seed with the selected player's position(s) if present & included
+                if sel_name is not None:
+                    sel_seed = pool_sc[pool_sc["Player"] == sel_name]
+                    for _, r in sel_seed.iterrows():
+                        placed_pts.append((float(r[x_metric]), float(r[y_metric])))
+
+                offsets = [(6,6), (-6,6), (6,-6), (-6,-6)]
+                for i, (_, r) in enumerate(label_df.iterrows()):
+                    pname = r["Player"]
+                    # don't duplicate the selected player's label
+                    if pname in already_labeled:
+                        continue
+
+                    px, py = float(r[x_metric]), float(r[y_metric])
+                    if not allow_overlap:
+                        too_close = any((abs(px - qx) < x_tol and abs(py - qy) < y_tol) for (qx, qy) in placed_pts)
+                        if too_close:
+                            continue
+                        placed_pts.append((px, py))
+
+                    dx, dy = offsets[i % len(offsets)]
+                    ax.annotate(
+                        pname, (px, py),
+                        xytext=(dx, dy), textcoords="offset points",
+                        fontsize=8, color="#111827", zorder=3
+                    )
+
+            # Styling: bold axis labels, light grid, subtle spines
+            ax.set_xlabel(x_metric, fontweight="bold")
+            ax.set_ylabel(y_metric, fontweight="bold")
+            ax.grid(True, which="major", linewidth=0.7, color="#d1d5db")
+            ax.grid(True, which="minor", linewidth=0.45, color="#e5e7eb", alpha=0.7)
+            ax.minorticks_on()
+            for spine in ax.spines.values():
+                spine.set_edgecolor("#9ca3af")
+
+            # Caption with pool size & leagues
+            leagues_shown = ", ".join(sorted(set(pool_sc["League"])))
+            st.caption(f"Pool size: {len(pool_sc):,} • Leagues: {leagues_shown}")
+            st.pyplot(fig, use_container_width=True)
 except Exception as e:
     st.info(f"Scatter could not be drawn: {e}")
-
 # ----------------------------------------------------------------------
-# ----------------- (B) COMPARISON RADAR (SB-STYLE) --------------------
-# ----------------------------------------------------------------------
+# ----------------- (B) COMPARISON RADAR (SB-STYLE) -----------------
 st.markdown("---")
 st.header("📊 Player Comparison Radar")
 with st.expander("Radar settings", expanded=False):
-    # default pos prefix from the selected player
-    default_pos_prefix = str(player_row["Position"].iloc[0])[:2] if not player_row.empty else "CF"
+    # default pos prefix from selected player
     pos_scope = st.text_input("Position startswith (radar pool)", default_pos_prefix, key="rad_pos")
-
+    df["Minutes played"] = pd.to_numeric(df["Minutes played"], errors="coerce")
+    df["Age"]            = pd.to_numeric(df["Age"], errors="coerce")
     min_minutes_r, max_minutes_r = st.slider("Minutes filter (radar pool)", 0, 5000, (1000, 5000), key="rad_min")
-    age_min_r_bound = int(df["Age"].min()) if df["Age"].notna().any() else 14
-    age_max_r_bound = int(df["Age"].max()) if df["Age"].notna().any() else 45
-    min_age_r, max_age_r = st.slider("Age filter (radar pool)", age_min_r_bound, age_max_r_bound, (16, 40), key="rad_age")
-
+    # default age 16–40 (changed from 16–33)
+    age_min_r_bound = int(np.nanmin(df["Age"])) if df["Age"].notna().any() else 14
+    age_max_r_bound = int(np.nanmax(df["Age"])) if df["Age"].notna().any() else 45
+    min_age_r, max_age_r = st.slider(
+        "Age filter (radar pool)",
+        age_min_r_bound, age_max_r_bound,
+        (16, 40), key="rad_age"
+    )
     picker_pool = df[df["Position"].astype(str).apply(position_filter)].copy()
     players = sorted(picker_pool["Player"].dropna().unique().tolist())
     if len(players) < 2:
@@ -969,12 +1057,12 @@ with st.expander("Radar settings", expanded=False):
 
     # default Player A = selected player if present
     try:
-        pA_index = players.index(player_name)  # type: ignore[arg-type]
+        pA_index = players.index(player_name)
     except Exception:
         pA_index = 0
     pA = st.selectbox("Player A (red)", players, index=pA_index, key="rad_a")
 
-    # default Player B = next one
+    # default Player B = next one (or index 1)
     pB_default_index = 1 if len(players) > 1 else 0
     if pA_index == pB_default_index and len(players) > 2:
         pB_default_index = 2
@@ -1024,6 +1112,7 @@ if radar_metrics:
             axis_max = pool[radar_metrics].max().values
             pad = (axis_max - axis_min) * 0.07
             axis_min = axis_min - pad; axis_max = axis_max + pad
+            ring_radii = np.linspace(10, 100, 11)
             axis_ticks = [np.linspace(axis_min[i], axis_max[i], 11) for i in range(len(labels))]
 
             if sort_by_gap:
@@ -1041,7 +1130,8 @@ if radar_metrics:
             LABEL_COLOR = "#0F172A"; TITLE_FS = 26; SUB_FS = 12; AXIS_FS = 10
             TICK_FS = 7; TICK_COLOR = "#9CA3AF"; INNER_HOLE = 10
 
-            def draw_radar(labels, A_r, B_r, ticks, headerA, headerB, show_avg=False, AVG_r=None):
+            def draw_radar(labels, A_r, B_r, ticks, headerA, subA, subA2, headerB, subB, subB2,
+                           show_avg=False, AVG_r=None):
                 N = len(labels)
                 theta = np.linspace(0, 2*np.pi, N, endpoint=False)
                 theta_closed = np.concatenate([theta, theta[:1]])
@@ -1073,18 +1163,24 @@ if radar_metrics:
                 ax.plot(theta_closed, Ar, color=COL_A, lw=2.2, zorder=3); ax.fill(theta_closed, Ar, color=FILL_A, zorder=2.5)
                 ax.plot(theta_closed, Br, color=COL_B, lw=2.2, zorder=3); ax.fill(theta_closed, Br, color=FILL_B, zorder=2.5)
                 ax.set_rlim(0, 105)
-                fig.text(0.12, 0.96,  f"{headerA}", color=COL_A, fontsize=TITLE_FS, fontweight="bold", ha="left")
-                fig.text(0.88, 0.96,  f"{headerB}", color=COL_B, fontsize=TITLE_FS, fontweight="bold", ha="right")
+                minsA = f"{int(pd.to_numeric(rowA.get('Minutes played',0))):,} mins" if pd.notna(rowA.get('Minutes played')) else "Minutes: N/A"
+                minsB = f"{int(pd.to_numeric(rowB.get('Minutes played',0))):,} mins" if pd.notna(rowB.get('Minutes played')) else "Minutes: N/A"
+                fig.text(0.12, 0.96,  f"{pA}", color=COL_A, fontsize=TITLE_FS, fontweight="bold", ha="left")
+                fig.text(0.12, 0.935, f"{rowA['Team']} — {rowA['League']}", color=COL_A, fontsize=SUB_FS, ha="left")
+                fig.text(0.12, 0.915, minsA, color="#374151", fontsize=10, ha="left")
+                fig.text(0.88, 0.96,  f"{pB}", color=COL_B, fontsize=TITLE_FS, fontweight="bold", ha="right")
+                fig.text(0.88, 0.935, f"{rowB['Team']} — {rowB['League']}", color=COL_B, fontsize=SUB_FS, ha="right")
+                fig.text(0.88, 0.915, minsB, color="#374151", fontsize=10, ha="right")
                 return fig
 
-            headerA = f"{pA} — {rowA['Team']} ({rowA['League']})"
-            headerB = f"{pB} — {rowB['Team']} ({rowB['League']})"
-            figr = draw_radar(labels, A_r, B_r, axis_ticks, headerA, headerB, show_avg=show_avg, AVG_r=AVG_r)
+            figr = draw_radar(labels, A_r, B_r, axis_ticks, pA, "", "", pB, "", "", show_avg=show_avg, AVG_r=AVG_r)
             st.pyplot(figr, use_container_width=True)
         else:
             st.info("No players remain in radar pool after filters.")
     except Exception as e:
         st.info(f"Radar could not be drawn: {e}")
+
+
 
 # ----------------------------------------------------------------------
 # ----------------- (C) SIMILAR PLAYERS (adjustable pool) --------------
