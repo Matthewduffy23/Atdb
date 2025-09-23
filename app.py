@@ -10,6 +10,7 @@ import re
 import streamlit as st
 import pandas as pd
 import numpy as np
+from datetime import datetime  # <-- add me
 import matplotlib.pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.patches import Circle, Wedge
@@ -184,36 +185,21 @@ def load_df(csv_name="WORLDJUNE25.csv"):
 df = load_df()
 
 # ----------------- SIDEBAR FILTERS -----------------
-# ------- in the sidebar, replace your current preset UI -------
 with st.sidebar:
     st.header("Filters")
+    c1, c2, c3 = st.columns([1,1,1])
+    use_top5  = c1.checkbox("Top-5 EU", value=False)
+    use_top20 = c2.checkbox("Top-20 EU", value=False)
+    use_efl   = c3.checkbox("EFL", value=False)
 
-    # segmented preset choice
-    preset_choice = st.segmented_control(
-        "League preset",
-        options=["All", "Top-5", "Top-20", "EFL", "Custom"],
-        help="Pick a preset, then prune or add leagues below.",
-        key="league_preset_seg"
-    )
+    seed = set()
+    if use_top5:  seed |= PRESET_LEAGUES["Top 5 Europe"]
+    if use_top20: seed |= PRESET_LEAGUES["Top 20 Europe"]
+    if use_efl:   seed |= PRESET_LEAGUES["EFL (England 2–4)"]
 
-    # resolve presets -> seed set
-    if preset_choice == "All":
-        seed = set(INCLUDED_LEAGUES)
-    elif preset_choice == "Top-5":
-        seed = set(PRESET_LEAGUES["Top 5 Europe"])
-    elif preset_choice == "Top-20":
-        seed = set(PRESET_LEAGUES["Top 20 Europe"])
-    elif preset_choice == "EFL":
-        seed = set(PRESET_LEAGUES["EFL (England 2–4)"])
-    else:
-        seed = set()  # Custom starts empty
-
-    # multiselect shows chips you can prune (like the screenshot)
     leagues_avail = sorted(set(INCLUDED_LEAGUES) | set(df.get("League", pd.Series([])).dropna().unique()))
-    leagues_sel = st.multiselect("Leagues (add or prune)", leagues_avail, default=sorted(seed) if seed else leagues_avail)
-
-    st.caption(f"Selected: **{len(leagues_sel)}** league(s)")
-
+    default_leagues = sorted(seed) if seed else INCLUDED_LEAGUES
+    leagues_sel = st.multiselect("Leagues (add or prune the presets)", leagues_avail, default=default_leagues)
 
     # numeric coercions
     df["Minutes played"] = pd.to_numeric(df["Minutes played"], errors="coerce")
@@ -717,6 +703,46 @@ styled = (
     .format({"Percentile": lambda x: f"{int(round(x))}" if pd.notna(x) else "—"})
 )
 st.dataframe(styled, use_container_width=True)
+
+# ---------- right under your "🎯 Single Player Role Profile" chooser ----------
+if "shortlist" not in st.session_state:
+    st.session_state.shortlist = []  # list of dicts
+
+def _add_to_shortlist(row: pd.Series):
+    item = {
+        "Player":  row["Player"],
+        "Team":    row.get("Team", ""),
+        "League":  row.get("League", ""),
+        "Age":     int(row.get("Age", 0)) if pd.notna(row.get("Age")) else "",
+        "Minutes": int(row.get("Minutes played", 0)) if pd.notna(row.get("Minutes played")) else "",
+        "Value":   float(row.get("Market value", 0)) if pd.notna(row.get("Market value")) else 0.0,
+        "Added":   datetime.now().strftime("%Y-%m-%d %H:%M"),
+    }
+    # dedupe by Player
+    st.session_state.shortlist = [x for x in st.session_state.shortlist if x["Player"] != item["Player"]]
+    st.session_state.shortlist.append(item)
+
+if not player_row.empty and st.button("⭐ Add to shortlist", type="primary", use_container_width=False):
+    _add_to_shortlist(player_row.iloc[0])
+    st.success("Added!")
+
+# ---------- render shortlist in the sidebar (bottom) ----------
+with st.sidebar:
+    st.markdown("---")
+    st.subheader("Shortlist")
+    if st.session_state.shortlist:
+        sldf = pd.DataFrame(st.session_state.shortlist)
+        st.dataframe(sldf, use_container_width=True, height=220)
+        st.download_button(
+            "⬇️ Download shortlist (CSV)",
+            data=sldf.to_csv(index=False).encode("utf-8"),
+            file_name="shortlist.csv", mime="text/csv", use_container_width=True
+        )
+        if st.button("🗑️ Clear shortlist", use_container_width=True):
+            st.session_state.shortlist = []
+    else:
+        st.caption("_No players shortlisted yet._")
+
 # ----------------- END SINGLE PLAYER ROLE PROFILE -----------------
 
 
@@ -1626,7 +1652,6 @@ else:
                             "strength_range": (int(min_strength_cf), int(max_strength_cf)),
                             "n_teams": int(results_cf.shape[0]),
                         })
-
 
 
 
