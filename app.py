@@ -378,23 +378,22 @@ for role, role_def in ROLES.items():
 
 # ----------------- SINGLE PLAYER ROLE PROFILE (REPLACED) -----------------
 st.subheader("🎯 Single Player Role Profile")
-player_name = st.selectbox("Choose player", sorted(df_f["Player"].unique()))
+
+# 🔧 add a unique key so it can't clash with any other selectbox
+player_name = st.selectbox(
+    "Choose player",
+    sorted(df_f["Player"].unique()),
+    key="sp_player_select"        # <= add this
+)
+
 player_row = df_f[df_f["Player"] == player_name].head(1)
 
-
-# derive defaults from selected player (to propagate)
-default_pos_prefix = str(player_row["Position"].iloc[0])[:2] if not player_row.empty else "CF"
-default_league_for_pool = [player_row["League"].iloc[0]] if not player_row.empty else []
-
-player_name = st.selectbox("Choose player", sorted(df_f["Player"].unique()))
-player_row = df_f[df_f["Player"] == player_name].head(1)
-
-# --- role banner under dropdown ---
+# ⬇️ role banner directly under the dropdown
 if not player_row.empty:
-    # compute role scores for this player
-    role_scores = {role: get_role_score(player_row, role) for role in ROLES.keys()}
+    # use your existing scorer so it matches the tables
+    role_scores = table_style_role_scores_from_row(player_row.iloc[0])
 
-    def _best_role_label(role_scores: dict) -> tuple[str, float]:
+    def _best_role_label(role_scores: dict):
         role_list = list(ROLES.keys())[:3]  # Playmaker, Goal Threat, Ball Carrier
         cand = [(r, role_scores.get(r, np.nan)) for r in role_list]
         cand = [(r, v) for r, v in cand if pd.notna(v)]
@@ -411,7 +410,6 @@ if not player_row.empty:
         st.metric("League Str.", f"{player_row['League Strength'].iloc[0]:.0f}")
     with c4:
         st.metric("Value", f"€{player_row['Market value'].iloc[0]:,.0f}")
-
 
 
 # Pool controls (for chart + notes only; NOT used for role scores)
