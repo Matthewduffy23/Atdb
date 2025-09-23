@@ -1149,14 +1149,16 @@ if radar_metrics:
         st.info(f"Radar could not be drawn: {e}")
 
 # =====================================================================
-# (E) ELITE PLAYER PROFILE — full-bleed, grouped percentile bars
+# ELITE ONE-PAGER — clean, readable, downloadable profile
 # =====================================================================
 st.markdown("---")
-st.header("🧾 Player Profile (elite & downloadable)")
+st.header("Player Profile")
 
-if not player_row.empty:
-    # ---- metric baskets (unchanged list, but rendered in 3 groups) ----
-    ALL = [
+if player_row.empty:
+    st.info("Pick a player above.")
+else:
+    # ---------- metric groups ----------
+    METRICS = [
         'Defensive duels per 90','Aerial duels won, %', 'Non-penalty goals per 90',
         'xG per 90','Shots per 90','Shots on target, %', 'Crosses per 90','Accurate crosses, %','Dribbles per 90',
         'Successful dribbles, %', 'Offensive duels per 90','Offensive duels won, %','Touches in box per 90',
@@ -1185,30 +1187,29 @@ if not player_row.empty:
         ],
     }
 
-    # ---- percentiles: pool-first, fallback to per-league table ----
-    def pct_for(m: str):
+    # ---------- percentiles: pool first, league fallback ----------
+    def pct_for(metric: str) -> float:
         try:
-            if isinstance(pool_df, pd.DataFrame) and m in pool_df.columns:
-                return percentile_in_series(ply[m], pool_df[m])
+            if isinstance(pool_df, pd.DataFrame) and metric in pool_df.columns:
+                return percentile_in_series(ply[metric], pool_df[metric])
         except Exception:
             pass
-        col = f"{m} Percentile"
+        col = f"{metric} Percentile"
         return float(player_row[col].iloc[0]) if col in player_row and pd.notna(player_row[col].iloc[0]) else np.nan
+    PCTS = {m: pct_for(m) for m in METRICS}
 
-    pct_map = {m: pct_for(m) for m in ALL}
-
-    # ---- role tag (first three roles only) ----
-    tag = ""
+    # ---------- best role tag (only among first 3 roles) ----------
+    best_tag = ""
     if role_scores:
-        r3 = list(ROLES.keys())[:3]
-        good = [(r, role_scores.get(r, np.nan)) for r in r3 if pd.notna(role_scores.get(r, np.nan))]
-        if good:
-            br, bv = max(good, key=lambda kv: kv[1])
-            tag = f"{br} {int(round(bv))}"
+        first3 = list(ROLES.keys())[:3]
+        items = [(r, role_scores.get(r, np.nan)) for r in first3 if pd.notna(role_scores.get(r, np.nan))]
+        if items:
+            r, v = max(items, key=lambda kv: kv[1])
+            best_tag = f"{r} {int(round(v))}"
 
-    # ---- label/value helpers (remove “per 90”, tiny raw value at left) ----
-    import re
-    def short_label(s: str) -> str:
+    # ---------- label helpers ----------
+    import re, matplotlib.pyplot as plt, io, numpy as np
+    def short(s: str) -> str:
         s = re.sub(r"\s*per\s*90", "", s, flags=re.I)
         s = s.replace("Non-penalty goals", "Non-pen goals")
         s = s.replace("Passes to penalty area", "Passes to pen. area")
@@ -1216,106 +1217,96 @@ if not player_row.empty:
         s = s.replace("Progressive passes", "Prog. passes").replace("Progressive runs", "Prog. runs")
         return s
 
-    def fmt_value(m: str, v) -> str:
+    def raw(metric: str, v) -> str:
         if pd.isna(v): return "—"
-        if "%" in m:   return f"{float(v):.0f}%"
+        if "%" in metric: return f"{float(v):.0f}%"
+        # compact but legible
         return f"{float(v):.2f}" if abs(float(v)) < 10 else f"{float(v):.1f}"
 
-    # ---- diverging R→Y→G ----
-    def ryb(v: float):
-        v = 0 if pd.isna(v) else max(0,min(100,float(v)))
-        if v <= 50:
-            t=v/50; a=(190/255,42/255,62/255); b=(244/255,209/255,102/255)
+    # R->Y->G map
+    def ryG(p):
+        p = 0 if pd.isna(p) else max(0, min(100, float(p)))
+        if p <= 50:
+            t=p/50; a=(190/255,42/255,62/255); b=(244/255,209/255,102/255)
         else:
-            t=(v-50)/50; a=(244/255,209/255,102/255); b=(34/255,197/255,94/255)
-        return tuple(a[i]+(b[i]-a[i])*t for i in range(3))
+            t=(p-50)/50; a=(244/255,209/255,102/255); b=(34/255,197/255,94/255)
+        return tuple(a[i] + (b[i]-a[i])*t for i in range(3))
 
-    # =================== DRAW ===================
-    import matplotlib.pyplot as plt
-    fig = plt.figure(figsize=(15.6, 10.2), dpi=240)
+    # ------------- CANVAS -------------
+    fig = plt.figure(figsize=(14.5, 10), dpi=260)
     fig.patch.set_facecolor("#0b1220")
 
-    # header (full width)
-    h = fig.add_axes([0.03, 0.915, 0.94, 0.07]); h.axis("off")
-    h.add_patch(plt.Rectangle((0,0),1,1,color="#0f172a"))
-    nm = str(ply["Player"]) if "Player" in ply else player_name
-    h.text(0.015, 0.62, nm, color="white", fontsize=22, fontweight=800)
+    # header
+    head = fig.add_axes([0.04, 0.92, 0.92, 0.06]); head.axis("off")
+    head.add_patch(plt.Rectangle((0,0),1,1,color="#0f172a"))
+    name = str(ply.get("Player", player_name))
+    head.text(0.02, 0.60, name, color="white", fontsize=22, fontweight=800)
     meta = f"{ply.get('Team','?')} — {ply.get('League','?')} • Age {int(ply['Age']) if pd.notna(ply.get('Age')) else '—'} • " \
            f"{int(ply['Minutes played']):,} mins • Pool {len(pool_df):,}" if isinstance(pool_df, pd.DataFrame) else \
            f"{ply.get('Team','?')} — {ply.get('League','?')}"
-    h.text(0.015, 0.18, meta, color="#94a3b8", fontsize=10, fontweight=500)
-    if tag:
-        h.add_patch(plt.Rectangle((0.84, 0.22), 0.15, 0.56, color="#065f46"))
-        h.text(0.915, 0.50, tag, color="#d1fae5", ha="center", va="center", fontsize=12, fontweight=800)
+    head.text(0.02, 0.18, meta, color="#94a3b8", fontsize=10, fontweight=500)
+    if best_tag:
+        head.add_patch(plt.Rectangle((0.82, 0.20), 0.16, 0.60, color="#065f46"))
+        head.text(0.90, 0.50, best_tag, color="#d1fae5", ha="center", va="center", fontsize=12, fontweight=800)
 
-    # big two-column body that fills the page
-    left  = fig.add_axes([0.03, 0.10, 0.47, 0.80]); left.axis("off")
-    right = fig.add_axes([0.52, 0.10, 0.45, 0.80]); right.axis("off")
+    # columns
+    axL = fig.add_axes([0.04, 0.13, 0.44, 0.75]); axL.axis("off")
+    axR = fig.add_axes([0.52, 0.13, 0.44, 0.75]); axR.axis("off")
 
-    def draw_block(ax, title, metrics, top_y=0.96, bar_h=0.028, gap=0.011):
-        ax.text(0.0, top_y, title, color="white", fontsize=13, fontweight=800, ha="left", va="center")
-        y = top_y - 0.045
-        track_w = 0.86  # wide bars to fill column
+    def draw_block(ax, title, metrics):
+        ax.text(0.0, 1.02, title, color="white", fontsize=13, fontweight=800, ha="left")
+        y = 0.95
+        H, G = 0.06, 0.025    # bar height, gap
+        W = 0.88              # track width
         for m in metrics:
-            p = pct_map.get(m, np.nan)
+            p = PCTS.get(m, np.nan)
             # track
-            ax.add_patch(plt.Rectangle((0.0, y-bar_h/2), track_w, bar_h, color="#e5e7eb", ec="none", zorder=1))
+            ax.add_patch(plt.Rectangle((0, y-H/2), W, H, color="#e5e7eb", ec="none", zorder=1))
             # fill
             if not pd.isna(p):
-                ax.add_patch(plt.Rectangle((0.0, y-bar_h/2), track_w*(p/100), bar_h,
-                                           color=ryb(p), ec="black", lw=0.45, zorder=2))
-            # value pill INSIDE start of bar (small black)
-            val = fmt_value(m, ply.get(m))
-            ax.text(0.008, y, val, color="black", fontsize=8,
+                ax.add_patch(plt.Rectangle((0, y-H/2), W*(p/100), H, color=ryG(p), ec="black", lw=0.4, zorder=2))
+            # raw value label (small, black) at start
+            ax.text(0.008, y, raw(m, ply.get(m)), color="black", fontsize=8,
                     ha="left", va="center",
                     bbox=dict(facecolor="white", edgecolor="#d1d5db", boxstyle="round,pad=0.15"))
-            # label (bold, white) just above track start
-            ax.text(0.0, y + bar_h*0.92, short_label(m), color="white", fontsize=9.2,
-                    fontweight=600, ha="left", va="bottom")
-            # percentile number at the bar end
+            # metric label above left
+            ax.text(0.0, y + H*0.65, short(m), color="white", fontsize=9.4, fontweight=600, ha="left")
+            # percentile number at fill end
             if not pd.isna(p):
-                ax.text(0.0 + track_w*(p/100) + 0.01, y, f"{int(round(p))}",
-                        color="#111827", fontsize=8, ha="left", va="center",
+                ax.text(W*(p/100)+0.01, y, f"{int(round(p))}", color="#111827", fontsize=8, ha="left", va="center",
                         bbox=dict(facecolor="white", edgecolor="#d1d5db", pad=0.2))
-            y -= (bar_h + gap)
-        return y
+            y -= (H + G)
 
-    # Left column: Attacking (tall), then Defensive
-    yL = draw_block(left, "Attacking", GROUPS["Attacking"], top_y=0.965)
-    draw_block(left, "Defensive", GROUPS["Defensive"], top_y=max(0.44, yL-0.02))
+    # left: Attacking + Defensive
+    draw_block(axL, "Attacking", GROUPS["Attacking"])
+    axL2 = fig.add_axes([0.04, 0.13, 0.44, 0.26]); axL2.axis("off")
+    draw_block(axL2, "Defensive", GROUPS["Defensive"])
 
-    # Right column: Passing & Creativity (tall)
-    yR = draw_block(right, "Passing & Creativity", GROUPS["Passing & Creativity"], top_y=0.965)
+    # right: Passing & Creativity
+    draw_block(axR, "Passing & Creativity", GROUPS["Passing & Creativity"])
 
-    # Chips panel under right column if space allows
-    chips_ax = fig.add_axes([0.52, 0.05, 0.45, 0.04]); chips_ax.axis("off")
-    def chip_row(x0, label, items, face):
-        chips_ax.text(x0, 0.75, label, color="white", fontsize=10, fontweight=800, ha="left")
+    # chips bar under right column
+    chips = fig.add_axes([0.52, 0.06, 0.44, 0.05]); chips.axis("off")
+    def chip_row(x0, title, items, face):
+        chips.text(x0, 0.75, title, color="white", fontsize=10, fontweight=800, ha="left")
         x = x0 + 0.12
         for t in (items or [])[:14]:
-            chips_ax.add_patch(plt.Rectangle((x, 0.25), 0.11, 0.45, facecolor=face, edgecolor="#d1d5db", lw=0.5))
-            chips_ax.text(x+0.006, 0.48, t, color="#111827", fontsize=8.5, ha="left", va="center")
-            x += 0.12
+            chips.add_patch(plt.Rectangle((x, 0.25), 0.12, 0.45, facecolor=face, edgecolor="#d1d5db", lw=0.6))
+            chips.text(x+0.006, 0.48, t, color="#111827", fontsize=8.6, ha="left", va="center")
+            x += 0.125
     chip_row(0.00, "Style",       styles,     "#bfdbfe")
     chip_row(0.36, "Strengths",   strengths,  "#a7f3d0")
     chip_row(0.72, "Weaknesses",  weaknesses, "#fecaca")
 
-    # footer
-    fig.text(0.5, 0.015, "Player Profile", color="#94a3b8", ha="center", fontsize=10)
-
+    fig.text(0.5, 0.02, "Player Profile", color="#94a3b8", ha="center", fontsize=10)
     st.pyplot(fig, use_container_width=True)
 
-    # download
-    import io
+    # download (PNG)
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=320, bbox_inches="tight", facecolor=fig.get_facecolor())
-    st.download_button("⬇️ Download profile (PNG)",
-                       data=buf.getvalue(),
-                       file_name=f"{player_name.replace(' ','_')}_profile.png",
-                       mime="image/png")
+    st.download_button("⬇️ Download PNG", data=buf.getvalue(),
+                       file_name=f"{name.replace(' ','_')}_profile.png", mime="image/png")
     plt.close(fig)
-else:
-    st.info("Pick a player above to build the profile.")
 
 
 # ----------------- (C) SIMILAR PLAYERS (adjustable pool) -----------------
