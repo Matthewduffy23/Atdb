@@ -10,11 +10,9 @@ import re
 import streamlit as st
 import pandas as pd
 import numpy as np
-from datetime import datetime  # <-- add me
 import matplotlib.pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.patches import Circle, Wedge
-
 
 # ---- Optional sklearn (fallback provided) ----
 try:
@@ -185,6 +183,7 @@ def load_df(csv_name="WORLDJUNE25.csv"):
 
 df = load_df()
 
+# ----------------- SIDEBAR FILTERS -----------------
 # ------- in the sidebar, replace your current preset UI -------
 with st.sidebar:
     st.header("Filters")
@@ -378,39 +377,12 @@ for role, role_def in ROLES.items():
 
 # ----------------- SINGLE PLAYER ROLE PROFILE (REPLACED) -----------------
 st.subheader("🎯 Single Player Role Profile")
-
-# 🔧 add a unique key so it can't clash with any other selectbox
-player_name = st.selectbox(
-    "Choose player",
-    sorted(df_f["Player"].unique()),
-    key="sp_player_select"        # <= add this
-)
-
+player_name = st.selectbox("Choose player", sorted(df_f["Player"].unique()))
 player_row = df_f[df_f["Player"] == player_name].head(1)
 
-# ⬇️ role banner directly under the dropdown
-if not player_row.empty:
-    # use your existing scorer so it matches the tables
-    role_scores = table_style_role_scores_from_row(player_row.iloc[0])
-
-    def _best_role_label(role_scores: dict):
-        role_list = list(ROLES.keys())[:3]  # Playmaker, Goal Threat, Ball Carrier
-        cand = [(r, role_scores.get(r, np.nan)) for r in role_list]
-        cand = [(r, v) for r, v in cand if pd.notna(v)]
-        return max(cand, key=lambda kv: kv[1]) if cand else ("—", np.nan)
-
-    best_role, best_score = _best_role_label(role_scores)
-
-    c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
-    with c1:
-        st.markdown(f"### 🎯 **{best_role}**")
-    with c2:
-        st.metric("Role score", f"{int(round(best_score)) if pd.notna(best_score) else '—'}")
-    with c3:
-        st.metric("League Str.", f"{player_row['League Strength'].iloc[0]:.0f}")
-    with c4:
-        st.metric("Value", f"€{player_row['Market value'].iloc[0]:,.0f}")
-
+# derive defaults from selected player (to propagate)
+default_pos_prefix = str(player_row["Position"].iloc[0])[:2] if not player_row.empty else "CF"
+default_league_for_pool = [player_row["League"].iloc[0]] if not player_row.empty else []
 
 # Pool controls (for chart + notes only; NOT used for role scores)
 st.caption("Percentiles & chart computed against the pool below (defaults to the player's league).")
@@ -521,7 +493,6 @@ else:
         pct_map = {}
     else:
         pct_map = percentiles_for_player_in_pool(pool_df, ply)
-
 
     # ---------- 1) PERFORMANCE CHART FIRST ----------
     labels = [clean_attacker_label(m) for m in POLAR_METRICS if m in pct_map]
@@ -746,47 +717,6 @@ styled = (
     .format({"Percentile": lambda x: f"{int(round(x))}" if pd.notna(x) else "—"})
 )
 st.dataframe(styled, use_container_width=True)
-
-
-
-# ---------- right under your "🎯 Single Player Role Profile" chooser ----------
-if "shortlist" not in st.session_state:
-    st.session_state.shortlist = []  # list of dicts
-
-def _add_to_shortlist(row: pd.Series):
-    item = {
-        "Player":  row["Player"],
-        "Team":    row.get("Team", ""),
-        "League":  row.get("League", ""),
-        "Age":     int(row.get("Age", 0)) if pd.notna(row.get("Age")) else "",
-        "Minutes": int(row.get("Minutes played", 0)) if pd.notna(row.get("Minutes played")) else "",
-        "Value":   float(row.get("Market value", 0)) if pd.notna(row.get("Market value")) else 0.0,
-        "Added":   datetime.now().strftime("%Y-%m-%d %H:%M"),
-    }
-    # dedupe by Player
-    st.session_state.shortlist = [x for x in st.session_state.shortlist if x["Player"] != item["Player"]]
-    st.session_state.shortlist.append(item)
-
-if not player_row.empty and st.button("⭐ Add to shortlist", type="primary", use_container_width=False):
-    _add_to_shortlist(player_row.iloc[0])
-    st.success("Added!")
-
-# ---------- render shortlist in the sidebar (bottom) ----------
-with st.sidebar:
-    st.markdown("---")
-    st.subheader("Shortlist")
-    if st.session_state.shortlist:
-        sldf = pd.DataFrame(st.session_state.shortlist)
-        st.dataframe(sldf, use_container_width=True, height=220)
-        st.download_button(
-            "⬇️ Download shortlist (CSV)",
-            data=sldf.to_csv(index=False).encode("utf-8"),
-            file_name="shortlist.csv", mime="text/csv", use_container_width=True
-        )
-        if st.button("🗑️ Clear shortlist", use_container_width=True):
-            st.session_state.shortlist = []
-    else:
-        st.caption("_No players shortlisted yet._")
 # ----------------- END SINGLE PLAYER ROLE PROFILE -----------------
 
 
@@ -1696,6 +1626,66 @@ else:
                             "strength_range": (int(min_strength_cf), int(max_strength_cf)),
                             "n_teams": int(results_cf.shape[0]),
                         })
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
