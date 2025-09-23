@@ -311,28 +311,6 @@ def compute_weighted_role_score(df_in: pd.DataFrame, metrics: dict, beta: float,
 for role_name, role_def in ROLES.items():
     df_f[f"{role_name} Score"] = compute_weighted_role_score(df_f, role_def["metrics"], beta=beta, league_weighting=use_league_weighting)
 
-# ------- one-line role banner (after role_scores is computed) -------
-def _best_role_label(role_scores: dict) -> tuple[str, float]:
-    # pick among your first three roles (Playmaker / Goal Threat / Ball Carrier)
-    role_list = list(ROLES.keys())[:3]
-    cand = [(r, role_scores.get(r, np.nan)) for r in role_list]
-    cand = [(r, v) for r, v in cand if pd.notna(v)]
-    return max(cand, key=lambda kv: kv[1]) if cand else ("—", np.nan)
-
-best_role, best_score = _best_role_label(role_scores)
-
-# headline line (mimics the screenshot)
-c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
-with c1:
-    st.markdown(f"### 🎯 **{best_role}**")
-with c2:
-    st.metric("Role score", f"{int(round(best_score)) if pd.notna(best_score) else '—'}")
-with c3:
-    st.metric("League Str.", f"{player_row['League Strength'].iloc[0]:.0f}")
-with c4:
-    st.metric("Value", f"€{player_row['Market value'].iloc[0]:,.0f}")
-
-
 # ----------------- THRESHOLDS -----------------
 if enable_min_perf and sel_metrics:
     keep_mask = np.ones(len(df_f), dtype=bool)
@@ -738,46 +716,6 @@ styled = (
     .format({"Percentile": lambda x: f"{int(round(x))}" if pd.notna(x) else "—"})
 )
 st.dataframe(styled, use_container_width=True)
-
-# ---------- right under your "🎯 Single Player Role Profile" chooser ----------
-if "shortlist" not in st.session_state:
-    st.session_state.shortlist = []  # list of dicts
-
-def _add_to_shortlist(row: pd.Series):
-    item = {
-        "Player":  row["Player"],
-        "Team":    row.get("Team", ""),
-        "League":  row.get("League", ""),
-        "Age":     int(row.get("Age", 0)) if pd.notna(row.get("Age")) else "",
-        "Minutes": int(row.get("Minutes played", 0)) if pd.notna(row.get("Minutes played")) else "",
-        "Value":   float(row.get("Market value", 0)) if pd.notna(row.get("Market value")) else 0.0,
-        "Added":   datetime.now().strftime("%Y-%m-%d %H:%M"),
-    }
-    # dedupe by Player
-    st.session_state.shortlist = [x for x in st.session_state.shortlist if x["Player"] != item["Player"]]
-    st.session_state.shortlist.append(item)
-
-if not player_row.empty and st.button("⭐ Add to shortlist", type="primary", use_container_width=False):
-    _add_to_shortlist(player_row.iloc[0])
-    st.success("Added!")
-
-# ---------- render shortlist in the sidebar (bottom) ----------
-with st.sidebar:
-    st.markdown("---")
-    st.subheader("Shortlist")
-    if st.session_state.shortlist:
-        sldf = pd.DataFrame(st.session_state.shortlist)
-        st.dataframe(sldf, use_container_width=True, height=220)
-        st.download_button(
-            "⬇️ Download shortlist (CSV)",
-            data=sldf.to_csv(index=False).encode("utf-8"),
-            file_name="shortlist.csv", mime="text/csv", use_container_width=True
-        )
-        if st.button("🗑️ Clear shortlist", use_container_width=True):
-            st.session_state.shortlist = []
-    else:
-        st.caption("_No players shortlisted yet._")
-
 # ----------------- END SINGLE PLAYER ROLE PROFILE -----------------
 
 
@@ -1687,6 +1625,66 @@ else:
                             "strength_range": (int(min_strength_cf), int(max_strength_cf)),
                             "n_teams": int(results_cf.shape[0]),
                         })
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
