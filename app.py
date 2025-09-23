@@ -381,17 +381,23 @@ st.subheader("🎯 Single Player Role Profile")
 player_name = st.selectbox("Choose player", sorted(df_f["Player"].unique()))
 player_row = df_f[df_f["Player"] == player_name].head(1)
 
-# ------- one-line role banner (after role_scores is computed) -------
+
+# derive defaults from selected player (to propagate)
+default_pos_prefix = str(player_row["Position"].iloc[0])[:2] if not player_row.empty else "CF"
+default_league_for_pool = [player_row["League"].iloc[0]] if not player_row.empty else []
+
+# compute role scores for this player
+role_scores = {role: get_role_score(player_row, role) for role in ROLES.keys()}
+
+# --- role banner under dropdown ---
 def _best_role_label(role_scores: dict) -> tuple[str, float]:
-    # pick among your first three roles (Playmaker / Goal Threat / Ball Carrier)
-    role_list = list(ROLES.keys())[:3]
+    role_list = list(ROLES.keys())[:3]  # Playmaker, Goal Threat, Ball Carrier
     cand = [(r, role_scores.get(r, np.nan)) for r in role_list]
     cand = [(r, v) for r, v in cand if pd.notna(v)]
     return max(cand, key=lambda kv: kv[1]) if cand else ("—", np.nan)
 
 best_role, best_score = _best_role_label(role_scores)
 
-# headline line (mimics the screenshot)
 c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
 with c1:
     st.markdown(f"### 🎯 **{best_role}**")
@@ -402,10 +408,6 @@ with c3:
 with c4:
     st.metric("Value", f"€{player_row['Market value'].iloc[0]:,.0f}")
 
-
-# derive defaults from selected player (to propagate)
-default_pos_prefix = str(player_row["Position"].iloc[0])[:2] if not player_row.empty else "CF"
-default_league_for_pool = [player_row["League"].iloc[0]] if not player_row.empty else []
 
 # Pool controls (for chart + notes only; NOT used for role scores)
 st.caption("Percentiles & chart computed against the pool below (defaults to the player's league).")
