@@ -185,21 +185,36 @@ def load_df(csv_name="WORLDJUNE25.csv"):
 df = load_df()
 
 # ----------------- SIDEBAR FILTERS -----------------
+# ------- in the sidebar, replace your current preset UI -------
 with st.sidebar:
     st.header("Filters")
-    c1, c2, c3 = st.columns([1,1,1])
-    use_top5  = c1.checkbox("Top-5 EU", value=False)
-    use_top20 = c2.checkbox("Top-20 EU", value=False)
-    use_efl   = c3.checkbox("EFL", value=False)
 
-    seed = set()
-    if use_top5:  seed |= PRESET_LEAGUES["Top 5 Europe"]
-    if use_top20: seed |= PRESET_LEAGUES["Top 20 Europe"]
-    if use_efl:   seed |= PRESET_LEAGUES["EFL (England 2–4)"]
+    # segmented preset choice
+    preset_choice = st.segmented_control(
+        "League preset",
+        options=["All", "Top-5", "Top-20", "EFL", "Custom"],
+        help="Pick a preset, then prune or add leagues below.",
+        key="league_preset_seg"
+    )
 
+    # resolve presets -> seed set
+    if preset_choice == "All":
+        seed = set(INCLUDED_LEAGUES)
+    elif preset_choice == "Top-5":
+        seed = set(PRESET_LEAGUES["Top 5 Europe"])
+    elif preset_choice == "Top-20":
+        seed = set(PRESET_LEAGUES["Top 20 Europe"])
+    elif preset_choice == "EFL":
+        seed = set(PRESET_LEAGUES["EFL (England 2–4)"])
+    else:
+        seed = set()  # Custom starts empty
+
+    # multiselect shows chips you can prune (like the screenshot)
     leagues_avail = sorted(set(INCLUDED_LEAGUES) | set(df.get("League", pd.Series([])).dropna().unique()))
-    default_leagues = sorted(seed) if seed else INCLUDED_LEAGUES
-    leagues_sel = st.multiselect("Leagues (add or prune the presets)", leagues_avail, default=default_leagues)
+    leagues_sel = st.multiselect("Leagues (add or prune)", leagues_avail, default=sorted(seed) if seed else leagues_avail)
+
+    st.caption(f"Selected: **{len(leagues_sel)}** league(s)")
+
 
     # numeric coercions
     df["Minutes played"] = pd.to_numeric(df["Minutes played"], errors="coerce")
