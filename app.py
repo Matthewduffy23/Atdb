@@ -1148,187 +1148,210 @@ if radar_metrics:
     except Exception as e:
         st.info(f"Radar could not be drawn: {e}")
 
-# ===========================================
-# (E) PLAYER PROFILE — one-page export (PNG)
-# ===========================================
+# =====================================================================
+# (E) PLAYER PROFILE — grouped bars + chips + best role (downloadable)
+# =====================================================================
+
 st.markdown("---")
-st.header("📄 Player Profile (downloadable)")
+st.header("🧾 Player Profile (downloadable)")
 
 if player_row.empty:
-    st.info("Pick a player above to generate a profile.")
+    st.info("Pick a player above to build the profile.")
 else:
-    # ---------- Helpers for the graphic ----------
-    from io import BytesIO
-    import matplotlib as mpl
-    import matplotlib.pyplot as plt
-    from matplotlib.patches import Rectangle
-    import textwrap
+    # ---------- 1) Percentiles for ALL metrics (pool-first, fallback to per-league already in df_f) ----------
+    ALL_METRICS = [
+        'Defensive duels per 90','Aerial duels won, %',
+        'Non-penalty goals per 90','xG per 90','Shots per 90','Shots on target, %',
+        'Crosses per 90','Accurate crosses, %','Dribbles per 90','Successful dribbles, %',
+        'Offensive duels per 90','Offensive duels won, %','Touches in box per 90',
+        'Progressive runs per 90','Accelerations per 90',
+        'Passes per 90','Accurate passes, %','Forward passes per 90','Long passes per 90',
+        'xA per 90','Smart passes per 90','Key passes per 90',
+        'Passes to final third per 90','Accurate passes to final third, %',
+        'Passes to penalty area per 90','Accurate passes to penalty area, %',
+        'Deep completions per 90','Progressive passes per 90','Accurate progressive passes, %'
+    ]
 
-    # R->Y->G diverging for 0..100
-    def ryg_color(v):
-        v = float(np.clip(v, 0, 100))
+    # Grouping for the layout (order matters)
+    GROUPS = {
+        "Attacking Play": [
+            'Non-penalty goals per 90','xG per 90','Shots per 90','Shots on target, %',
+            'Touches in box per 90','Dribbles per 90','Successful dribbles, %',
+            'Offensive duels per 90','Offensive duels won, %','Progressive runs per 90','Accelerations per 90'
+        ],
+        "Passing & Creativity": [
+            'Passes per 90','Accurate passes, %','Forward passes per 90','Long passes per 90',
+            'xA per 90','Smart passes per 90','Key passes per 90',
+            'Passes to final third per 90','Accurate passes to final third, %',
+            'Passes to penalty area per 90','Accurate passes to penalty area, %',
+            'Deep completions per 90','Progressive passes per 90','Accurate progressive passes, %',
+            'Crosses per 90','Accurate crosses, %'
+        ],
+        "Defensive Performance": [
+            'Defensive duels per 90','Aerial duels won, %'
+        ],
+    }
+
+    # Pool-first percentiles for every metric, fallback to per-league table percentiles we computed earlier
+    def pct_from_pool_or_table(metric: str) -> float | None:
+        # pool first
+        try:
+            if isinstance(pool_df, pd.DataFrame) and (metric in pool_df.columns):
+                return percentile_in_series(ply[metric], pool_df[metric])
+        except Exception:
+            pass
+        # fallback to per-league percentile on the selected row
+        col = f"{metric} Percentile"
+        if col in player_row.columns and pd.notna(player_row[col].iloc[0]):
+            return float(player_row[col].iloc[0])
+        return None
+
+    pct_map_all = {m: pct_from_pool_or_table(m) for m in ALL_METRICS}
+
+    # ---------- 2) Best role among first three ----------
+    tag_role = ""
+    if role_scores:
+        _first_three = list(ROLES.keys())[:3]
+        _cands = [(r, role_scores.get(r, np.nan)) for r in _first_three if pd.notna(role_scores.get(r, np.nan))]
+        if _cands:
+            _best_role, _best_val = max(_cands, key=lambda kv: kv[1])
+            tag_role = f"{_best_role} {int(round(_best_val))}"
+
+    # ---------- 3) Clean label + value formatting ----------
+    def short_label(s: str) -> str:
+        # remove " per 90", tighten names to look like your mock
+        s2 = re.sub(r"\s*per\s*90", "", s, flags=re.I)
+        s2 = s2.replace("Non-penalty goals", "Non-pen goals")
+        s2 = s2.replace("Touches in box", "Touches in box")
+        s2 = s2.replace("Accurate ", "")  # we'll add % sign via value
+        s2 = s2.replace("Progressive passes", "Prog. passes").replace("Progressive runs", "Prog. runs")
+        s2 = s2.replace("Passes to penalty area", "Passes to pen. area")
+        s2 = s2.replace("Passes to final third", "Passes to final 3rd")
+        return s2
+
+    def fmt_value(metric: str, val) -> str:
+        if pd.isna(val): return "—"
+        if "%" in metric:
+            return f"{float(val):.0f}%"
+        # tidy small numbers / rates
+        if abs(float(val)) < 10:
+            return f"{float(val):.2f}"
+        return f"{float(val):.1f}"
+
+    # ---------- 4) Color scaling (R→Y→G) ----------
+    def rgb_diverging(v: float) -> tuple[float, float, float]:
+        # v in [0,100]
+        v = max(0.0, min(100.0, float(v)))
         if v <= 50:
-            # red -> yellow
-            t = v / 50.0
-            c1, c2 = np.array([190, 42, 62]), np.array([244, 209, 102])
+            t = v/50.0
+            r1,g1,b1 = (190/255, 42/255, 62/255)   # red
+            r2,g2,b2 = (244/255,209/255,102/255)   # yellow
         else:
-            # yellow -> green
-            t = (v - 50.0) / 50.0
-            c1, c2 = np.array([244, 209, 102]), np.array([34, 197, 94])
-        c = (c1 + (c2 - c1) * t) / 255.0
-        return tuple(c)
+            t = (v-50.0)/50.0
+            r1,g1,b1 = (244/255,209/255,102/255)   # yellow
+            r2,g2,b2 = (34/255,197/255,94/255)     # green
+        return (r1 + (r2-r1)*t, g1 + (g2-g1)*t, b1 + (b2-b1)*t)
 
-    def draw_bar(ax, label, value, y, bar_height=0.6, x_max=100, font=9, show_num=True):
-        ax.add_patch(Rectangle((0, y - bar_height/2), x_max, bar_height,
-                               facecolor="#E5E7EB", edgecolor="none", zorder=1))
-        ax.add_patch(Rectangle((0, y - bar_height/2), value, bar_height,
-                               facecolor=ryg_color(value), edgecolor="#111", linewidth=0.5, zorder=2))
-        ax.text(-2.0, y, label, va="center", ha="right", fontsize=font, color="#111827")
-        if show_num:
-            ax.text(min(value + 2, x_max - 1), y, f"{int(round(value))}", va="center",
-                    ha="left", fontsize=font, color="#111827", fontweight="bold")
+    # ---------- 5) Draw profile ----------
+    # layout: header; left column = Attacking + Defensive; right = Passing & Creativity + chips box
+    fig = plt.figure(figsize=(13.8, 10.2), dpi=220)
+    fig.patch.set_facecolor("#0f172a")  # dark canvas
+    ax_bg = fig.add_axes([0,0,1,1]); ax_bg.axis("off")
 
-    def chipline(ax, items, x0, y0, max_w, row_gap=0.32, pad=0.06, face="#E5F3FF"):
-        """Render simple chip spans onto an axes in figure fraction coordinates."""
-        if not items: return y0
-        ax.axis("off")
-        x, y = x0, y0
-        for txt in items:
-            s = f"  {txt}  "
-            t = ax.text(x, y, s, fontsize=9, va="top", ha="left",
-                        color="#0F172A",
-                        bbox=dict(boxstyle="round,pad=0.2", fc=face, ec="none"))
-            plt.gcf().canvas.draw()  # get renderer size for bbox
-            bb = t.get_window_extent(renderer=plt.gcf().canvas.get_renderer())
-            inv = ax.transAxes.inverted()
-            w_axes = inv.transform((bb.width, 0))[0] - inv.transform((0, 0))[0]
-            if x + w_axes > x0 + max_w:
-                # wrap
-                x = x0
-                y -= row_gap
-                t.set_position((x, y))
-                plt.gcf().canvas.draw()
-                bb = t.get_window_extent(renderer=plt.gcf().canvas.get_renderer())
-                inv = ax.transAxes.inverted()
-                w_axes = inv.transform((bb.width, 0))[0] - inv.transform((0, 0))[0]
-            x += w_axes + pad
-        return y - row_gap  # next baseline
+    # Header band
+    header = fig.add_axes([0.03, 0.90, 0.94, 0.08]); header.axis("off")
+    # player line
+    header.add_patch(plt.Rectangle((0,0), 1, 1, color="#111827"))
+    # name
+    header.text(0.02, 0.55, f"{player_name}", color="white", fontsize=20, fontweight="bold", ha="left", va="center")
+    # team / league line
+    _team, _league = str(ply.get("Team","?")), str(ply.get("League","?"))
+    header.text(0.02, 0.20, f"{_team} — {_league}", color="#9ca3af", fontsize=10, ha="left", va="center")
+    # best role tag
+    if tag_role:
+        header.add_patch(plt.Rectangle((0.84, 0.25), 0.14, 0.50, color="#064e3b", ec="none", lw=0))
+        header.text(0.91, 0.50, tag_role, color="#dcfce7", fontsize=12, fontweight="bold", ha="center", va="center")
 
-    # Prepare display data
-    meta_team   = str(player_row.iloc[0].get("Team", ""))
-    meta_league = str(player_row.iloc[0].get("League", ""))
-    best_score  = None
-    if isinstance(role_scores, dict) and role_scores:
-        best_score = role_scores.get(best_role, None)
+    # panels
+    ax_left  = fig.add_axes([0.03, 0.08, 0.46, 0.80]);  ax_left.axis("off")
+    ax_right = fig.add_axes([0.51, 0.08, 0.46, 0.80]);  ax_right.axis("off")
 
-    # Role list: only the first three roles defined
-    first3_roles = list(ROLES.keys())[:3]
-    role_rows = [(r, float(role_scores.get(r, np.nan))) for r in first3_roles if r in role_scores]
+    def draw_group(ax, title: str, metrics: list[str], y0=0.92):
+        # title
+        ax.text(0.00, y0, title, color="white", fontsize=12, fontweight="bold", ha="left", va="center")
+        y = y0 - 0.05
+        bar_h = 0.026; gap = 0.012
+        for m in metrics:
+            pct = pct_map_all.get(m, None)
+            if pct is None or pd.isna(pct): pct = np.nan
+            # background track
+            ax.add_patch(plt.Rectangle((0.00, y - bar_h/2), 0.78, bar_h, color="#e5e7eb", ec="none", zorder=1))
+            # colored bar
+            if not pd.isna(pct):
+                fill_w = 0.78 * float(pct)/100.0
+                ax.add_patch(plt.Rectangle((0.00, y - bar_h/2), fill_w, bar_h, color=rgb_diverging(pct), ec="black", lw=0.4, zorder=2))
+            # label (left)
+            ax.text(0.00, y + bar_h*0.95, short_label(m), color="white", fontsize=8.5, ha="left", va="bottom")
+            # value (small black, just above the track on the right of label)
+            val_txt = fmt_value(m, ply.get(m))
+            ax.text(0.79, y, val_txt, color="black", fontsize=8, ha="left", va="center",
+                    bbox=dict(facecolor="white", edgecolor="#d1d5db", boxstyle="round,pad=0.15"))
+            # percentile number on the bar end
+            if not pd.isna(pct):
+                ax.text(min(0.78, 0.00 + 0.78 * float(pct)/100.0) + 0.01, y,
+                        f"{int(round(pct))}", color="black", fontsize=8, ha="left", va="center",
+                        bbox=dict(facecolor="white", edgecolor="#d1d5db", pad=0.2))
+            y -= (bar_h + gap)
+        # return last y to continue another section on same axis
+        return y - 0.02
 
-    # Percentile panel: take EXTRA_METRICS we computed percentiles for; keep up to 16–20
-    metric_items = [(m, float(v)) for m, v in pct_extra.items() if pd.notna(v)]
-    # Sort by value descending, cap to 18 lines for tidy layout
-    metric_items = sorted(metric_items, key=lambda kv: -kv[1])[:18]
+    # Left: Attacking, then Defensive
+    y_after_att = draw_group(ax_left, "Attacking Play", GROUPS["Attacking Play"], y0=0.95)
+    draw_group(ax_left, "Defensive Performance", GROUPS["Defensive Performance"], y0=min(y_after_att, 0.45))
 
-    # ---------- Figure layout ----------
-    fig = plt.figure(figsize=(12.0, 8.4), dpi=220)
-    fig.patch.set_facecolor("#0B1020")  # dark header bg strip illusion
+    # Right: Passing & Creativity … plus chips box
+    y_after_pas = draw_group(ax_right, "Passing & Creativity", GROUPS["Passing & Creativity"], y0=0.95)
 
-    # Grid: header, body (two cols), footer roles
-    gs = fig.add_gridspec(nrows=16, ncols=12, left=0.05, right=0.98, top=0.96, bottom=0.06, hspace=0.0, wspace=0.4)
+    # Chips box (Style / Strengths / Weaknesses)
+    box_y = min(y_after_pas, 0.40)
+    chip_ax = fig.add_axes([0.51, 0.08, 0.46, box_y-0.02]); chip_ax.axis("off")
+    chip_ax.add_patch(plt.Rectangle((0,0), 1, 1, color="#111827", ec="#374151", lw=0.6))
+    chip_ax.text(0.03, 0.88, "Style", color="white", fontsize=11, fontweight="bold", ha="left", va="center")
+    chip_ax.text(0.03, 0.52, "Strengths", color="white", fontsize=11, fontweight="bold", ha="left", va="center")
+    chip_ax.text(0.03, 0.16, "Weaknesses", color="white", fontsize=11, fontweight="bold", ha="left", va="center")
 
-    # Header band (spanning)
-    ax_head = fig.add_subplot(gs[0:2, :])
-    ax_head.axis("off")
-    # card background
-    ax_head.add_patch(Rectangle((0, 0), 1, 1, transform=ax_head.transAxes,
-                                facecolor="#111827", edgecolor="none", zorder=0))
-    title = f"{player_name}"
-    sub   = f"{meta_team} — {meta_league}"
-    ax_head.text(0.02, 0.62, title, color="white", fontsize=18, fontweight="bold", ha="left", va="center")
-    ax_head.text(0.02, 0.20, sub, color="#D1D5DB", fontsize=10, ha="left", va="center")
+    def draw_chips(y, items, face):
+        x = 0.03
+        for t in (items[:12] if items else []):
+            w = 0.012 * max(55, len(t))  # crude width by length
+            chip_ax.add_patch(plt.Rectangle((x, y-0.05), 0.22, 0.08, facecolor=face, edgecolor="#d1d5db", lw=0.5))
+            chip_ax.text(x+0.01, y-0.01, t, color="#111827", fontsize=9, ha="left", va="center")
+            x += 0.24
+            if x > 0.95:
+                x = 0.03; y -= 0.10
+        return y
 
-    if best_role and best_score is not None:
-        ax_head.text(0.98, 0.62, f"{best_role} {int(round(best_score))}",
-                     color="white", fontsize=18, fontweight="bold", ha="right", va="center",
-                     bbox=dict(boxstyle="round,pad=0.3", fc="#16A34A", ec="none"))
+    _y = draw_chips(0.82, styles,  "#bfdbfe")  # light blue
+    _y = draw_chips(0.46, strengths, "#a7f3d0")  # light green
+    _y = draw_chips(0.10, weaknesses, "#fecaca")  # light red
 
-    # Left column: Percentile bars
-    ax_left = fig.add_subplot(gs[2:14, 0:7])
-    ax_left.set_facecolor("#FFFFFF")
-    ax_left.set_xlim(0, 100)
-    # extend a little for labels
-    ax_left.set_ylim(-1, max(0, len(metric_items)))
-    ax_left.axis("off")
-    ax_left.add_patch(Rectangle((-6, -2), 112, len(metric_items)+3, facecolor="#FFFFFF", zorder=0, ec="#E5E7EB"))
+    # Footer label
+    fig.text(0.5, 0.02, "Player Profile", ha="center", va="center", color="#9ca3af", fontsize=10)
 
-    # Title for panel
-    ax_left.text(0, len(metric_items)+0.6, "Percentiles (pool-based where available)",
-                 fontsize=11, fontweight="bold", color="#0F172A", ha="left", va="center")
+    st.pyplot(fig, use_container_width=True)
 
-    # draw bars (top -> bottom)
-    for i, (lab, val) in enumerate(metric_items):
-        y = len(metric_items) - 1 - i  # invert so top first
-        draw_bar(ax_left, lab, val, y, bar_height=0.7, font=9)
-
-    # Right column: chips (Style, Strengths, Weaknesses)
-    ax_right = fig.add_subplot(gs[2:10, 7:])
-    ax_right.axis("off")
-    ax_right.add_patch(Rectangle((0, 0), 1, 1, transform=ax_right.transAxes, facecolor="#FFFFFF", ec="#E5E7EB"))
-    y_cursor = 0.95
-    ax_right.text(0.04, y_cursor, "Style", fontsize=11, fontweight="bold", color="#0F172A", transform=ax_right.transAxes)
-    y_cursor = chipline(ax_right, styles, x0=0.04, y0=0.88, max_w=0.90, face="#DBEAFE")  # blue
-    ax_right.text(0.04, y_cursor, "Strengths", fontsize=11, fontweight="bold", color="#0F172A", transform=ax_right.transAxes)
-    y_cursor = chipline(ax_right, strengths, x0=0.04, y0=y_cursor-0.07, max_w=0.90, face="#D1FAE5")  # green
-    ax_right.text(0.04, y_cursor, "Weaknesses", fontsize=11, fontweight="bold", color="#0F172A", transform=ax_right.transAxes)
-    chipline(ax_right, weaknesses, x0=0.04, y0=y_cursor-0.07, max_w=0.90, face="#FECACA")  # red
-
-    # Bottom: first three roles as bars
-    ax_roles = fig.add_subplot(gs[14:, :])
-    ax_roles.set_facecolor("#FFFFFF")
-    ax_roles.axis("off")
-    ax_roles.add_patch(Rectangle((0, 0), 1, 1, transform=ax_roles.transAxes, facecolor="#FFFFFF", ec="#E5E7EB"))
-    ax_roles.text(0.01, 0.90, "Role Scores (first three)", fontsize=11, fontweight="bold", color="#0F172A")
-
-    # Make a simple horizontal bar area within [x: 0..100] coordinates
-    role_y0 = 0.55
-    gap = 0.22
-    for idx, (rname, rval) in enumerate(role_rows):
-        # tiny local axes for each bar
-        left_ax = fig.add_axes([0.08, 0.09 + idx*gap, 0.84, 0.08])
-        left_ax.set_xlim(0, 100); left_ax.set_ylim(0, 1)
-        left_ax.axis("off")
-        # background
-        left_ax.add_patch(Rectangle((0, 0.15), 100, 0.70, facecolor="#E5E7EB", ec="none"))
-        # foreground
-        left_ax.add_patch(Rectangle((0, 0.15), max(0.0, min(100.0, rval)), 0.70,
-                                    facecolor=ryg_color(rval), ec="#111", lw=0.5))
-        left_ax.text(-2.0, 0.5, rname, ha="right", va="center", fontsize=10, color="#111827")
-        left_ax.text(min(rval + 2, 99), 0.5, f"{int(round(rval))}", ha="left", va="center",
-                     fontsize=10, color="#111827", fontweight="bold")
-
-    # Light card border feel
-    for a in [ax_left, ax_right, ax_roles]:
-        for spine in ["left", "right", "top", "bottom"]:
-            a.spines[spine].set_visible(False)
-
-    # ---------- Show + Download ----------
-    bio = BytesIO()
-    fig.savefig(bio, format="png", dpi=220, facecolor=fig.get_facecolor(), bbox_inches="tight")
-    plt.close(fig)
-    bio.seek(0)
-
-    st.image(bio.getvalue(), use_container_width=True, caption="Player Profile")
-
+    # ---------- 6) Download as PNG ----------
+    import io
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=300, bbox_inches="tight", facecolor=fig.get_facecolor())
     st.download_button(
-        label="⬇️ Download Player Profile (PNG)",
-        data=bio.getvalue(),
-        file_name=f"{player_name.replace(' ', '_').lower()}_profile.png",
+        "⬇️ Download profile (PNG)",
+        data=buf.getvalue(),
+        file_name=f"{player_name.replace(' ', '_')}_profile.png",
         mime="image/png",
-        use_container_width=True
+        use_container_width=False,
     )
-
-
+    plt.close(fig)
 
 # ----------------- (C) SIMILAR PLAYERS (adjustable pool) -----------------
 st.markdown("---")
