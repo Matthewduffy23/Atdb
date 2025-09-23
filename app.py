@@ -1149,32 +1149,25 @@ if radar_metrics:
         st.info(f"Radar could not be drawn: {e}")
 
 # =====================================================================
-# (E) PLAYER PROFILE — grouped bars + chips + best role (downloadable)
+# (E) ELITE PLAYER PROFILE — full-bleed, grouped percentile bars
 # =====================================================================
-
 st.markdown("---")
-st.header("🧾 Player Profile (downloadable)")
+st.header("🧾 Player Profile (elite & downloadable)")
 
-if player_row.empty:
-    st.info("Pick a player above to build the profile.")
-else:
-    # ---------- 1) Percentiles for ALL metrics (pool-first, fallback to per-league already in df_f) ----------
-    ALL_METRICS = [
-        'Defensive duels per 90','Aerial duels won, %',
-        'Non-penalty goals per 90','xG per 90','Shots per 90','Shots on target, %',
-        'Crosses per 90','Accurate crosses, %','Dribbles per 90','Successful dribbles, %',
-        'Offensive duels per 90','Offensive duels won, %','Touches in box per 90',
-        'Progressive runs per 90','Accelerations per 90',
-        'Passes per 90','Accurate passes, %','Forward passes per 90','Long passes per 90',
-        'xA per 90','Smart passes per 90','Key passes per 90',
+if not player_row.empty:
+    # ---- metric baskets (unchanged list, but rendered in 3 groups) ----
+    ALL = [
+        'Defensive duels per 90','Aerial duels won, %', 'Non-penalty goals per 90',
+        'xG per 90','Shots per 90','Shots on target, %', 'Crosses per 90','Accurate crosses, %','Dribbles per 90',
+        'Successful dribbles, %', 'Offensive duels per 90','Offensive duels won, %','Touches in box per 90',
+        'Progressive runs per 90','Accelerations per 90','Passes per 90','Accurate passes, %', 'Forward passes per 90',
+        'Long passes per 90','xA per 90','Smart passes per 90','Key passes per 90',
         'Passes to final third per 90','Accurate passes to final third, %',
-        'Passes to penalty area per 90','Accurate passes to penalty area, %',
+        'Passes to penalty area per 90','Accurate passes to penalty area, %', 
         'Deep completions per 90','Progressive passes per 90','Accurate progressive passes, %'
     ]
-
-    # Grouping for the layout (order matters)
     GROUPS = {
-        "Attacking Play": [
+        "Attacking": [
             'Non-penalty goals per 90','xG per 90','Shots per 90','Shots on target, %',
             'Touches in box per 90','Dribbles per 90','Successful dribbles, %',
             'Offensive duels per 90','Offensive duels won, %','Progressive runs per 90','Accelerations per 90'
@@ -1187,171 +1180,143 @@ else:
             'Deep completions per 90','Progressive passes per 90','Accurate progressive passes, %',
             'Crosses per 90','Accurate crosses, %'
         ],
-        "Defensive Performance": [
+        "Defensive": [
             'Defensive duels per 90','Aerial duels won, %'
         ],
     }
 
-    # Pool-first percentiles for every metric, fallback to per-league table percentiles we computed earlier
-    def pct_from_pool_or_table(metric: str) -> float | None:
-        # pool first
+    # ---- percentiles: pool-first, fallback to per-league table ----
+    def pct_for(m: str):
         try:
-            if isinstance(pool_df, pd.DataFrame) and (metric in pool_df.columns):
-                return percentile_in_series(ply[metric], pool_df[metric])
+            if isinstance(pool_df, pd.DataFrame) and m in pool_df.columns:
+                return percentile_in_series(ply[m], pool_df[m])
         except Exception:
             pass
-        # fallback to per-league percentile on the selected row
-        col = f"{metric} Percentile"
-        if col in player_row.columns and pd.notna(player_row[col].iloc[0]):
-            return float(player_row[col].iloc[0])
-        return None
+        col = f"{m} Percentile"
+        return float(player_row[col].iloc[0]) if col in player_row and pd.notna(player_row[col].iloc[0]) else np.nan
 
-    pct_map_all = {m: pct_from_pool_or_table(m) for m in ALL_METRICS}
+    pct_map = {m: pct_for(m) for m in ALL}
 
-    # ---------- 2) Best role among first three ----------
-    tag_role = ""
+    # ---- role tag (first three roles only) ----
+    tag = ""
     if role_scores:
-        _first_three = list(ROLES.keys())[:3]
-        _cands = [(r, role_scores.get(r, np.nan)) for r in _first_three if pd.notna(role_scores.get(r, np.nan))]
-        if _cands:
-            _best_role, _best_val = max(_cands, key=lambda kv: kv[1])
-            tag_role = f"{_best_role} {int(round(_best_val))}"
+        r3 = list(ROLES.keys())[:3]
+        good = [(r, role_scores.get(r, np.nan)) for r in r3 if pd.notna(role_scores.get(r, np.nan))]
+        if good:
+            br, bv = max(good, key=lambda kv: kv[1])
+            tag = f"{br} {int(round(bv))}"
 
-    # ---------- 3) Clean label + value formatting ----------
+    # ---- label/value helpers (remove “per 90”, tiny raw value at left) ----
+    import re
     def short_label(s: str) -> str:
-        # remove " per 90", tighten names to look like your mock
-        s2 = re.sub(r"\s*per\s*90", "", s, flags=re.I)
-        s2 = s2.replace("Non-penalty goals", "Non-pen goals")
-        s2 = s2.replace("Touches in box", "Touches in box")
-        s2 = s2.replace("Accurate ", "")  # we'll add % sign via value
-        s2 = s2.replace("Progressive passes", "Prog. passes").replace("Progressive runs", "Prog. runs")
-        s2 = s2.replace("Passes to penalty area", "Passes to pen. area")
-        s2 = s2.replace("Passes to final third", "Passes to final 3rd")
-        return s2
+        s = re.sub(r"\s*per\s*90", "", s, flags=re.I)
+        s = s.replace("Non-penalty goals", "Non-pen goals")
+        s = s.replace("Passes to penalty area", "Passes to pen. area")
+        s = s.replace("Passes to final third", "Passes to final 3rd")
+        s = s.replace("Progressive passes", "Prog. passes").replace("Progressive runs", "Prog. runs")
+        return s
 
-    def fmt_value(metric: str, val) -> str:
-        if pd.isna(val): return "—"
-        if "%" in metric:
-            return f"{float(val):.0f}%"
-        # tidy small numbers / rates
-        if abs(float(val)) < 10:
-            return f"{float(val):.2f}"
-        return f"{float(val):.1f}"
+    def fmt_value(m: str, v) -> str:
+        if pd.isna(v): return "—"
+        if "%" in m:   return f"{float(v):.0f}%"
+        return f"{float(v):.2f}" if abs(float(v)) < 10 else f"{float(v):.1f}"
 
-    # ---------- 4) Color scaling (R→Y→G) ----------
-    def rgb_diverging(v: float) -> tuple[float, float, float]:
-        # v in [0,100]
-        v = max(0.0, min(100.0, float(v)))
+    # ---- diverging R→Y→G ----
+    def ryb(v: float):
+        v = 0 if pd.isna(v) else max(0,min(100,float(v)))
         if v <= 50:
-            t = v/50.0
-            r1,g1,b1 = (190/255, 42/255, 62/255)   # red
-            r2,g2,b2 = (244/255,209/255,102/255)   # yellow
+            t=v/50; a=(190/255,42/255,62/255); b=(244/255,209/255,102/255)
         else:
-            t = (v-50.0)/50.0
-            r1,g1,b1 = (244/255,209/255,102/255)   # yellow
-            r2,g2,b2 = (34/255,197/255,94/255)     # green
-        return (r1 + (r2-r1)*t, g1 + (g2-g1)*t, b1 + (b2-b1)*t)
+            t=(v-50)/50; a=(244/255,209/255,102/255); b=(34/255,197/255,94/255)
+        return tuple(a[i]+(b[i]-a[i])*t for i in range(3))
 
-    # ---------- 5) Draw profile ----------
-    # layout: header; left column = Attacking + Defensive; right = Passing & Creativity + chips box
-    fig = plt.figure(figsize=(13.8, 10.2), dpi=220)
-    fig.patch.set_facecolor("#0f172a")  # dark canvas
-    ax_bg = fig.add_axes([0,0,1,1]); ax_bg.axis("off")
+    # =================== DRAW ===================
+    import matplotlib.pyplot as plt
+    fig = plt.figure(figsize=(15.6, 10.2), dpi=240)
+    fig.patch.set_facecolor("#0b1220")
 
-    # Header band
-    header = fig.add_axes([0.03, 0.90, 0.94, 0.08]); header.axis("off")
-    # player line
-    header.add_patch(plt.Rectangle((0,0), 1, 1, color="#111827"))
-    # name
-    header.text(0.02, 0.55, f"{player_name}", color="white", fontsize=20, fontweight="bold", ha="left", va="center")
-    # team / league line
-    _team, _league = str(ply.get("Team","?")), str(ply.get("League","?"))
-    header.text(0.02, 0.20, f"{_team} — {_league}", color="#9ca3af", fontsize=10, ha="left", va="center")
-    # best role tag
-    if tag_role:
-        header.add_patch(plt.Rectangle((0.84, 0.25), 0.14, 0.50, color="#064e3b", ec="none", lw=0))
-        header.text(0.91, 0.50, tag_role, color="#dcfce7", fontsize=12, fontweight="bold", ha="center", va="center")
+    # header (full width)
+    h = fig.add_axes([0.03, 0.915, 0.94, 0.07]); h.axis("off")
+    h.add_patch(plt.Rectangle((0,0),1,1,color="#0f172a"))
+    nm = str(ply["Player"]) if "Player" in ply else player_name
+    h.text(0.015, 0.62, nm, color="white", fontsize=22, fontweight=800)
+    meta = f"{ply.get('Team','?')} — {ply.get('League','?')} • Age {int(ply['Age']) if pd.notna(ply.get('Age')) else '—'} • " \
+           f"{int(ply['Minutes played']):,} mins • Pool {len(pool_df):,}" if isinstance(pool_df, pd.DataFrame) else \
+           f"{ply.get('Team','?')} — {ply.get('League','?')}"
+    h.text(0.015, 0.18, meta, color="#94a3b8", fontsize=10, fontweight=500)
+    if tag:
+        h.add_patch(plt.Rectangle((0.84, 0.22), 0.15, 0.56, color="#065f46"))
+        h.text(0.915, 0.50, tag, color="#d1fae5", ha="center", va="center", fontsize=12, fontweight=800)
 
-    # panels
-    ax_left  = fig.add_axes([0.03, 0.08, 0.46, 0.80]);  ax_left.axis("off")
-    ax_right = fig.add_axes([0.51, 0.08, 0.46, 0.80]);  ax_right.axis("off")
+    # big two-column body that fills the page
+    left  = fig.add_axes([0.03, 0.10, 0.47, 0.80]); left.axis("off")
+    right = fig.add_axes([0.52, 0.10, 0.45, 0.80]); right.axis("off")
 
-    def draw_group(ax, title: str, metrics: list[str], y0=0.92):
-        # title
-        ax.text(0.00, y0, title, color="white", fontsize=12, fontweight="bold", ha="left", va="center")
-        y = y0 - 0.05
-        bar_h = 0.026; gap = 0.012
+    def draw_block(ax, title, metrics, top_y=0.96, bar_h=0.028, gap=0.011):
+        ax.text(0.0, top_y, title, color="white", fontsize=13, fontweight=800, ha="left", va="center")
+        y = top_y - 0.045
+        track_w = 0.86  # wide bars to fill column
         for m in metrics:
-            pct = pct_map_all.get(m, None)
-            if pct is None or pd.isna(pct): pct = np.nan
-            # background track
-            ax.add_patch(plt.Rectangle((0.00, y - bar_h/2), 0.78, bar_h, color="#e5e7eb", ec="none", zorder=1))
-            # colored bar
-            if not pd.isna(pct):
-                fill_w = 0.78 * float(pct)/100.0
-                ax.add_patch(plt.Rectangle((0.00, y - bar_h/2), fill_w, bar_h, color=rgb_diverging(pct), ec="black", lw=0.4, zorder=2))
-            # label (left)
-            ax.text(0.00, y + bar_h*0.95, short_label(m), color="white", fontsize=8.5, ha="left", va="bottom")
-            # value (small black, just above the track on the right of label)
-            val_txt = fmt_value(m, ply.get(m))
-            ax.text(0.79, y, val_txt, color="black", fontsize=8, ha="left", va="center",
+            p = pct_map.get(m, np.nan)
+            # track
+            ax.add_patch(plt.Rectangle((0.0, y-bar_h/2), track_w, bar_h, color="#e5e7eb", ec="none", zorder=1))
+            # fill
+            if not pd.isna(p):
+                ax.add_patch(plt.Rectangle((0.0, y-bar_h/2), track_w*(p/100), bar_h,
+                                           color=ryb(p), ec="black", lw=0.45, zorder=2))
+            # value pill INSIDE start of bar (small black)
+            val = fmt_value(m, ply.get(m))
+            ax.text(0.008, y, val, color="black", fontsize=8,
+                    ha="left", va="center",
                     bbox=dict(facecolor="white", edgecolor="#d1d5db", boxstyle="round,pad=0.15"))
-            # percentile number on the bar end
-            if not pd.isna(pct):
-                ax.text(min(0.78, 0.00 + 0.78 * float(pct)/100.0) + 0.01, y,
-                        f"{int(round(pct))}", color="black", fontsize=8, ha="left", va="center",
+            # label (bold, white) just above track start
+            ax.text(0.0, y + bar_h*0.92, short_label(m), color="white", fontsize=9.2,
+                    fontweight=600, ha="left", va="bottom")
+            # percentile number at the bar end
+            if not pd.isna(p):
+                ax.text(0.0 + track_w*(p/100) + 0.01, y, f"{int(round(p))}",
+                        color="#111827", fontsize=8, ha="left", va="center",
                         bbox=dict(facecolor="white", edgecolor="#d1d5db", pad=0.2))
             y -= (bar_h + gap)
-        # return last y to continue another section on same axis
-        return y - 0.02
-
-    # Left: Attacking, then Defensive
-    y_after_att = draw_group(ax_left, "Attacking Play", GROUPS["Attacking Play"], y0=0.95)
-    draw_group(ax_left, "Defensive Performance", GROUPS["Defensive Performance"], y0=min(y_after_att, 0.45))
-
-    # Right: Passing & Creativity … plus chips box
-    y_after_pas = draw_group(ax_right, "Passing & Creativity", GROUPS["Passing & Creativity"], y0=0.95)
-
-    # Chips box (Style / Strengths / Weaknesses)
-    box_y = min(y_after_pas, 0.40)
-    chip_ax = fig.add_axes([0.51, 0.08, 0.46, box_y-0.02]); chip_ax.axis("off")
-    chip_ax.add_patch(plt.Rectangle((0,0), 1, 1, color="#111827", ec="#374151", lw=0.6))
-    chip_ax.text(0.03, 0.88, "Style", color="white", fontsize=11, fontweight="bold", ha="left", va="center")
-    chip_ax.text(0.03, 0.52, "Strengths", color="white", fontsize=11, fontweight="bold", ha="left", va="center")
-    chip_ax.text(0.03, 0.16, "Weaknesses", color="white", fontsize=11, fontweight="bold", ha="left", va="center")
-
-    def draw_chips(y, items, face):
-        x = 0.03
-        for t in (items[:12] if items else []):
-            w = 0.012 * max(55, len(t))  # crude width by length
-            chip_ax.add_patch(plt.Rectangle((x, y-0.05), 0.22, 0.08, facecolor=face, edgecolor="#d1d5db", lw=0.5))
-            chip_ax.text(x+0.01, y-0.01, t, color="#111827", fontsize=9, ha="left", va="center")
-            x += 0.24
-            if x > 0.95:
-                x = 0.03; y -= 0.10
         return y
 
-    _y = draw_chips(0.82, styles,  "#bfdbfe")  # light blue
-    _y = draw_chips(0.46, strengths, "#a7f3d0")  # light green
-    _y = draw_chips(0.10, weaknesses, "#fecaca")  # light red
+    # Left column: Attacking (tall), then Defensive
+    yL = draw_block(left, "Attacking", GROUPS["Attacking"], top_y=0.965)
+    draw_block(left, "Defensive", GROUPS["Defensive"], top_y=max(0.44, yL-0.02))
 
-    # Footer label
-    fig.text(0.5, 0.02, "Player Profile", ha="center", va="center", color="#9ca3af", fontsize=10)
+    # Right column: Passing & Creativity (tall)
+    yR = draw_block(right, "Passing & Creativity", GROUPS["Passing & Creativity"], top_y=0.965)
+
+    # Chips panel under right column if space allows
+    chips_ax = fig.add_axes([0.52, 0.05, 0.45, 0.04]); chips_ax.axis("off")
+    def chip_row(x0, label, items, face):
+        chips_ax.text(x0, 0.75, label, color="white", fontsize=10, fontweight=800, ha="left")
+        x = x0 + 0.12
+        for t in (items or [])[:14]:
+            chips_ax.add_patch(plt.Rectangle((x, 0.25), 0.11, 0.45, facecolor=face, edgecolor="#d1d5db", lw=0.5))
+            chips_ax.text(x+0.006, 0.48, t, color="#111827", fontsize=8.5, ha="left", va="center")
+            x += 0.12
+    chip_row(0.00, "Style",       styles,     "#bfdbfe")
+    chip_row(0.36, "Strengths",   strengths,  "#a7f3d0")
+    chip_row(0.72, "Weaknesses",  weaknesses, "#fecaca")
+
+    # footer
+    fig.text(0.5, 0.015, "Player Profile", color="#94a3b8", ha="center", fontsize=10)
 
     st.pyplot(fig, use_container_width=True)
 
-    # ---------- 6) Download as PNG ----------
+    # download
     import io
     buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=300, bbox_inches="tight", facecolor=fig.get_facecolor())
-    st.download_button(
-        "⬇️ Download profile (PNG)",
-        data=buf.getvalue(),
-        file_name=f"{player_name.replace(' ', '_')}_profile.png",
-        mime="image/png",
-        use_container_width=False,
-    )
+    fig.savefig(buf, format="png", dpi=320, bbox_inches="tight", facecolor=fig.get_facecolor())
+    st.download_button("⬇️ Download profile (PNG)",
+                       data=buf.getvalue(),
+                       file_name=f"{player_name.replace(' ','_')}_profile.png",
+                       mime="image/png")
     plt.close(fig)
+else:
+    st.info("Pick a player above to build the profile.")
+
 
 # ----------------- (C) SIMILAR PLAYERS (adjustable pool) -----------------
 st.markdown("---")
