@@ -386,27 +386,32 @@ player_row = df_f[df_f["Player"] == player_name].head(1)
 default_pos_prefix = str(player_row["Position"].iloc[0])[:2] if not player_row.empty else "CF"
 default_league_for_pool = [player_row["League"].iloc[0]] if not player_row.empty else []
 
-# compute role scores for this player
-role_scores = {role: get_role_score(player_row, role) for role in ROLES.keys()}
+player_name = st.selectbox("Choose player", sorted(df_f["Player"].unique()))
+player_row = df_f[df_f["Player"] == player_name].head(1)
 
 # --- role banner under dropdown ---
-def _best_role_label(role_scores: dict) -> tuple[str, float]:
-    role_list = list(ROLES.keys())[:3]  # Playmaker, Goal Threat, Ball Carrier
-    cand = [(r, role_scores.get(r, np.nan)) for r in role_list]
-    cand = [(r, v) for r, v in cand if pd.notna(v)]
-    return max(cand, key=lambda kv: kv[1]) if cand else ("—", np.nan)
+if not player_row.empty:
+    # compute role scores for this player
+    role_scores = {role: get_role_score(player_row, role) for role in ROLES.keys()}
 
-best_role, best_score = _best_role_label(role_scores)
+    def _best_role_label(role_scores: dict) -> tuple[str, float]:
+        role_list = list(ROLES.keys())[:3]  # Playmaker, Goal Threat, Ball Carrier
+        cand = [(r, role_scores.get(r, np.nan)) for r in role_list]
+        cand = [(r, v) for r, v in cand if pd.notna(v)]
+        return max(cand, key=lambda kv: kv[1]) if cand else ("—", np.nan)
 
-c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
-with c1:
-    st.markdown(f"### 🎯 **{best_role}**")
-with c2:
-    st.metric("Role score", f"{int(round(best_score)) if pd.notna(best_score) else '—'}")
-with c3:
-    st.metric("League Str.", f"{player_row['League Strength'].iloc[0]:.0f}")
-with c4:
-    st.metric("Value", f"€{player_row['Market value'].iloc[0]:,.0f}")
+    best_role, best_score = _best_role_label(role_scores)
+
+    c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
+    with c1:
+        st.markdown(f"### 🎯 **{best_role}**")
+    with c2:
+        st.metric("Role score", f"{int(round(best_score)) if pd.notna(best_score) else '—'}")
+    with c3:
+        st.metric("League Str.", f"{player_row['League Strength'].iloc[0]:.0f}")
+    with c4:
+        st.metric("Value", f"€{player_row['Market value'].iloc[0]:,.0f}")
+
 
 
 # Pool controls (for chart + notes only; NOT used for role scores)
