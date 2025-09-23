@@ -493,6 +493,46 @@ else:
     else:
         pct_map = percentiles_for_player_in_pool(pool_df, ply)
 
+    # ---------- right under your "🎯 Single Player Role Profile" chooser ----------
+if "shortlist" not in st.session_state:
+    st.session_state.shortlist = []  # list of dicts
+
+def _add_to_shortlist(row: pd.Series):
+    item = {
+        "Player":  row["Player"],
+        "Team":    row.get("Team", ""),
+        "League":  row.get("League", ""),
+        "Age":     int(row.get("Age", 0)) if pd.notna(row.get("Age")) else "",
+        "Minutes": int(row.get("Minutes played", 0)) if pd.notna(row.get("Minutes played")) else "",
+        "Value":   float(row.get("Market value", 0)) if pd.notna(row.get("Market value")) else 0.0,
+        "Added":   datetime.now().strftime("%Y-%m-%d %H:%M"),
+    }
+    # dedupe by Player
+    st.session_state.shortlist = [x for x in st.session_state.shortlist if x["Player"] != item["Player"]]
+    st.session_state.shortlist.append(item)
+
+if not player_row.empty and st.button("⭐ Add to shortlist", type="primary", use_container_width=False):
+    _add_to_shortlist(player_row.iloc[0])
+    st.success("Added!")
+
+# ---------- render shortlist in the sidebar (bottom) ----------
+with st.sidebar:
+    st.markdown("---")
+    st.subheader("Shortlist")
+    if st.session_state.shortlist:
+        sldf = pd.DataFrame(st.session_state.shortlist)
+        st.dataframe(sldf, use_container_width=True, height=220)
+        st.download_button(
+            "⬇️ Download shortlist (CSV)",
+            data=sldf.to_csv(index=False).encode("utf-8"),
+            file_name="shortlist.csv", mime="text/csv", use_container_width=True
+        )
+        if st.button("🗑️ Clear shortlist", use_container_width=True):
+            st.session_state.shortlist = []
+    else:
+        st.caption("_No players shortlisted yet._")
+
+
     # ---------- 1) PERFORMANCE CHART FIRST ----------
     labels = [clean_attacker_label(m) for m in POLAR_METRICS if m in pct_map]
     vals   = [pct_map[m] for m in POLAR_METRICS if m in pct_map]
