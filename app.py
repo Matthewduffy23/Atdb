@@ -720,6 +720,28 @@ styled = (
 )
 st.dataframe(styled, use_container_width=True)
 
+# ------- one-line role banner (after role_scores is computed) -------
+def _best_role_label(role_scores: dict) -> tuple[str, float]:
+    # pick among your first three roles (Playmaker / Goal Threat / Ball Carrier)
+    role_list = list(ROLES.keys())[:3]
+    cand = [(r, role_scores.get(r, np.nan)) for r in role_list]
+    cand = [(r, v) for r, v in cand if pd.notna(v)]
+    return max(cand, key=lambda kv: kv[1]) if cand else ("—", np.nan)
+
+best_role, best_score = _best_role_label(role_scores)
+
+# headline line (mimics the screenshot)
+c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
+with c1:
+    st.markdown(f"### 🎯 **{best_role}**")
+with c2:
+    st.metric("Role score", f"{int(round(best_score)) if pd.notna(best_score) else '—'}")
+with c3:
+    st.metric("League Str.", f"{player_row['League Strength'].iloc[0]:.0f}")
+with c4:
+    st.metric("Value", f"€{player_row['Market value'].iloc[0]:,.0f}")
+
+
 # ---------- right under your "🎯 Single Player Role Profile" chooser ----------
 if "shortlist" not in st.session_state:
     st.session_state.shortlist = []  # list of dicts
